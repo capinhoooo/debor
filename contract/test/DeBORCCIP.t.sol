@@ -254,6 +254,53 @@ contract DeBORCCIPTest is Test {
         assertEq(receiver.allowedSender(), address(0xBEEF));
     }
 
+    function test_relayNoActiveDestinations() public {
+        // Remove the only active destination
+        sender.removeDestination(0);
+
+        vm.expectRevert(DeBORCCIPSender.NoActiveDestinations.selector);
+        sender.relayBenchmark{value: MOCK_FEE}(benchmarkData);
+    }
+
+    function test_receiverGetters() public {
+        _deliverMessage();
+
+        assertEq(receiver.getRate(), 367);
+        assertEq(receiver.getSupplyRate(), 234);
+        assertEq(receiver.getSpread(), 133);
+        assertEq(receiver.getVolatility(), 2014000);
+        assertEq(receiver.getTermRate(), 367);
+    }
+
+    function test_receiverMultipleUpdates() public {
+        _deliverWithRate(100);
+        assertEq(receiver.getRate(), 100);
+
+        _deliverWithRate(200);
+        assertEq(receiver.getRate(), 200);
+
+        _deliverWithRate(300);
+        assertEq(receiver.getRate(), 300);
+        assertEq(receiver.historyIndex(), 3);
+    }
+
+    function test_threeDestinationsRelay() public {
+        // Add Arbitrum and OP Sepolia as 2nd + 3rd destinations
+        uint64 arbSelector = 3478487238524512106;
+        uint64 opSelector = 5224473277236331295;
+        sender.addDestination(arbSelector, address(0xBEEF));
+        sender.addDestination(opSelector, address(0xCAFE));
+        assertEq(sender.getDestinationCount(), 3);
+
+        // Relay to all 3 destinations
+        sender.relayBenchmark{value: MOCK_FEE * 3}(benchmarkData);
+        assertEq(mockRouter.messageCount(), 3);
+
+        // Fee should reflect 3 destinations
+        uint256 totalFee = sender.getTotalFee(benchmarkData);
+        assertEq(totalFee, MOCK_FEE * 3);
+    }
+
     // --- Helpers ---
 
     function _deliverMessage() internal {
