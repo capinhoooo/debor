@@ -75,9 +75,7 @@ contract DeployReceiverArb is Script {
 /// @notice Deploy DeBORCCIPReceiver on Optimism Sepolia
 /// Usage: CCIP_SENDER=0xE99c38245EA789E9102Dc23EE28FAd3ed67d2432 forge script script/DeployCCIP.s.sol:DeployReceiverOP --rpc-url op_sepolia --broadcast --verify
 contract DeployReceiverOP is Script {
-    // Optimism Sepolia CCIP Router
     address constant OP_SEPOLIA_ROUTER = 0x114A20A10b43D4115e5aeef7345a1A71d2a60C57;
-    // Sepolia chain selector
     uint64 constant SEPOLIA_SELECTOR = 16015286601757825753;
 
     function run() external {
