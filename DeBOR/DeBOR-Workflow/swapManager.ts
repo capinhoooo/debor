@@ -17,7 +17,7 @@ import { encodeFunctionData, decodeFunctionResult, encodeAbiParameters, parseAbi
 import { DEBOR_SWAP_ABI, DEBOR_ORACLE_READ_ABI } from './abis'
 import type { Config } from './types'
 
-export const BENCHMARK_UPDATED_EVENT_SIG = '0x93e5b8091bfc656c6c16d3aa65d80c3428f4674b4673129a4edafd342d20c0bb'
+export const BENCHMARK_UPDATED_EVENT_SIG = '0x39b30b48c37c75c1a92ab0663ddea47330411f58b47a764238930f6f9bb0df16'
 
 const MAX_SWAPS_PER_BATCH = 10n
 const RATE_SPIKE_THRESHOLD = 100n 
