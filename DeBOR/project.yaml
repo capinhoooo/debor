@@ -26,11 +26,36 @@
 # ==========================================================================
 staging-settings:
   rpcs:
+    # --- MAINNET RPCs (for reading live rates) ---
+    - chain-name: ethereum-mainnet
+      url: https://mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
+    - chain-name: ethereum-mainnet-base-1
+      url: https://base-mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
+    - chain-name: ethereum-mainnet-arbitrum-1
+      url: https://arbitrum-mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
+    - chain-name: ethereum-mainnet-optimism-1
+      url: https://optimism-mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
+    - chain-name: avalanche-mainnet
+      url: https://avalanche-mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
+    - chain-name: polygon-mainnet
+      url: https://polygon-mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
     - chain-name: ethereum-testnet-sepolia
-      url: https://ethereum-sepolia-rpc.publicnode.com
+      url: https://sepolia.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
 
 # ==========================================================================
 production-settings:
   rpcs:
+    - chain-name: ethereum-mainnet
+      url: https://mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
+    - chain-name: ethereum-mainnet-base-1
+      url: https://base-mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
+    - chain-name: ethereum-mainnet-arbitrum-1
+      url: https://arbitrum-mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
+    - chain-name: ethereum-mainnet-optimism-1
+      url: https://optimism-mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
+    - chain-name: avalanche-mainnet
+      url: https://avalanche-mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
+    - chain-name: polygon-mainnet
+      url: https://polygon-mainnet.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4
     - chain-name: ethereum-testnet-sepolia
-      url: https://ethereum-sepolia-rpc.publicnode.com
+      url: https://sepolia.infura.io/v3/b6652bb1dac64d0a96a7a01043b44ee4

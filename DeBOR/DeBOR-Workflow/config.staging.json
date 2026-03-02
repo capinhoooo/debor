@@ -1,3 +1,406 @@
 {
-  "schedule": "*/30 * * * * *"
+  "schedule": "0 */30 * * * *",
+  "protocols": [
+    {
+      "protocol": "aave_v3",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+      "assetAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "rateType": "aave",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "base",
+      "chainSelectorName": "ethereum-mainnet-base-1",
+      "contractAddress": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+      "assetAddress": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "rateType": "aave",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "arbitrum",
+      "chainSelectorName": "ethereum-mainnet-arbitrum-1",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "rateType": "aave",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "optimism",
+      "chainSelectorName": "ethereum-mainnet-optimism-1",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+      "rateType": "aave",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "avalanche",
+      "chainSelectorName": "avalanche-mainnet",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+      "rateType": "aave",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "polygon",
+      "chainSelectorName": "polygon-mainnet",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+      "rateType": "aave",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "spark",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0xC13e21B648A5Ee794902342038FF3aDAB66BE987",
+      "assetAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "rateType": "spark",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "compound_v3",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0xc3d688B66703497DAA19211EEdff47f25384Cdc3",
+      "assetAddress": "",
+      "rateType": "compound",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "morpho_blue",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+      "assetAddress": "0xb323495f7e4148be5643a4ea4a8221eef163e4bccfdedc2a6f4696baacbc86cc",
+      "rateType": "morpho",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "moonwell",
+      "chain": "base",
+      "chainSelectorName": "ethereum-mainnet-base-1",
+      "contractAddress": "0xEdc817A28E8B93B03976FBd4a3dDBc9f7D176c22",
+      "assetAddress": "",
+      "rateType": "ctoken",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "moonwell",
+      "chain": "optimism",
+      "chainSelectorName": "ethereum-mainnet-optimism-1",
+      "contractAddress": "0x8E08617b0d66359D73Aa11E11017834C29155525",
+      "assetAddress": "",
+      "rateType": "ctoken",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "benqi",
+      "chain": "avalanche",
+      "chainSelectorName": "avalanche-mainnet",
+      "contractAddress": "0xBEb5d47A3f720Ec0a390d04b4d41ED7d9688bC7F",
+      "assetAddress": "",
+      "rateType": "ctoken",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "compound_v3",
+      "chain": "base",
+      "chainSelectorName": "ethereum-mainnet-base-1",
+      "contractAddress": "0xb125E6687d4313864e53df431d5425969c15Eb2F",
+      "assetAddress": "",
+      "rateType": "compound",
+      "asset": "USDC"
+    },
+    {
+      "protocol": "compound_v3",
+      "chain": "arbitrum",
+      "chainSelectorName": "ethereum-mainnet-arbitrum-1",
+      "contractAddress": "0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf",
+      "assetAddress": "",
+      "rateType": "compound",
+      "asset": "USDC"
+    },
+
+    {
+      "protocol": "aave_v3",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+      "assetAddress": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "rateType": "aave",
+      "asset": "ETH"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "base",
+      "chainSelectorName": "ethereum-mainnet-base-1",
+      "contractAddress": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+      "assetAddress": "0x4200000000000000000000000000000000000006",
+      "rateType": "aave",
+      "asset": "ETH"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "arbitrum",
+      "chainSelectorName": "ethereum-mainnet-arbitrum-1",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+      "rateType": "aave",
+      "asset": "ETH"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "optimism",
+      "chainSelectorName": "ethereum-mainnet-optimism-1",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x4200000000000000000000000000000000000006",
+      "rateType": "aave",
+      "asset": "ETH"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "avalanche",
+      "chainSelectorName": "avalanche-mainnet",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x49D5c2BdFfac6CE2BFdB6640F4F80f226bc10bAB",
+      "rateType": "aave",
+      "asset": "ETH"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "polygon",
+      "chainSelectorName": "polygon-mainnet",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",
+      "rateType": "aave",
+      "asset": "ETH"
+    },
+    {
+      "protocol": "spark",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0xC13e21B648A5Ee794902342038FF3aDAB66BE987",
+      "assetAddress": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "rateType": "spark",
+      "asset": "ETH"
+    },
+    {
+      "protocol": "compound_v3",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0xA17581A9E3356d9A858b789D68B4d866e593aE94",
+      "assetAddress": "",
+      "rateType": "compound",
+      "asset": "ETH"
+    },
+    {
+      "protocol": "moonwell",
+      "chain": "base",
+      "chainSelectorName": "ethereum-mainnet-base-1",
+      "contractAddress": "0x628ff693426583D9a7FB391E54366292F509D457",
+      "assetAddress": "",
+      "rateType": "ctoken",
+      "asset": "ETH"
+    },
+    {
+      "protocol": "moonwell",
+      "chain": "optimism",
+      "chainSelectorName": "ethereum-mainnet-optimism-1",
+      "contractAddress": "0xb4104C02BBf4E9be85AAa41a62974E4e28D59A33",
+      "assetAddress": "",
+      "rateType": "ctoken",
+      "asset": "ETH"
+    },
+
+    {
+      "protocol": "aave_v3",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+      "assetAddress": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+      "rateType": "aave",
+      "asset": "BTC"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "arbitrum",
+      "chainSelectorName": "ethereum-mainnet-arbitrum-1",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",
+      "rateType": "aave",
+      "asset": "BTC"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "optimism",
+      "chainSelectorName": "ethereum-mainnet-optimism-1",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x68f180fcCe6836688e9084f035309E29Bf0A2095",
+      "rateType": "aave",
+      "asset": "BTC"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "avalanche",
+      "chainSelectorName": "avalanche-mainnet",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x50b7545627a5162F82A992c33b87aDc75187B218",
+      "rateType": "aave",
+      "asset": "BTC"
+    },
+    {
+      "protocol": "benqi",
+      "chain": "avalanche",
+      "chainSelectorName": "avalanche-mainnet",
+      "contractAddress": "0xe194c4c5aC32a3C9ffDb358d9Bfd523a0B6d1568",
+      "assetAddress": "",
+      "rateType": "ctoken",
+      "asset": "BTC"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+      "assetAddress": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "rateType": "aave",
+      "asset": "DAI"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "arbitrum",
+      "chainSelectorName": "ethereum-mainnet-arbitrum-1",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+      "rateType": "aave",
+      "asset": "DAI"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "optimism",
+      "chainSelectorName": "ethereum-mainnet-optimism-1",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+      "rateType": "aave",
+      "asset": "DAI"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "avalanche",
+      "chainSelectorName": "avalanche-mainnet",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0xd586E7F844cEa2F87f50152665BCbc2C279D8d70",
+      "rateType": "aave",
+      "asset": "DAI"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "polygon",
+      "chainSelectorName": "polygon-mainnet",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
+      "rateType": "aave",
+      "asset": "DAI"
+    },
+    {
+      "protocol": "spark",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0xC13e21B648A5Ee794902342038FF3aDAB66BE987",
+      "assetAddress": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "rateType": "spark",
+      "asset": "DAI"
+    },
+    {
+      "protocol": "moonwell",
+      "chain": "optimism",
+      "chainSelectorName": "ethereum-mainnet-optimism-1",
+      "contractAddress": "0x3FE782C2Fe7668C2F1Eb313ACf3022a31feaD6B2",
+      "assetAddress": "",
+      "rateType": "ctoken",
+      "asset": "DAI"
+    },
+    {
+      "protocol": "benqi",
+      "chain": "avalanche",
+      "chainSelectorName": "avalanche-mainnet",
+      "contractAddress": "0x835866d37AFB8CB8F8334dCCdaf66cf01832Ff5D",
+      "assetAddress": "",
+      "rateType": "ctoken",
+      "asset": "DAI"
+    },
+
+    {
+      "protocol": "aave_v3",
+      "chain": "ethereum",
+      "chainSelectorName": "ethereum-mainnet",
+      "contractAddress": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+      "assetAddress": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "rateType": "aave",
+      "asset": "USDT"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "arbitrum",
+      "chainSelectorName": "ethereum-mainnet-arbitrum-1",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+      "rateType": "aave",
+      "asset": "USDT"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "optimism",
+      "chainSelectorName": "ethereum-mainnet-optimism-1",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+      "rateType": "aave",
+      "asset": "USDT"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "avalanche",
+      "chainSelectorName": "avalanche-mainnet",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7",
+      "rateType": "aave",
+      "asset": "USDT"
+    },
+    {
+      "protocol": "aave_v3",
+      "chain": "polygon",
+      "chainSelectorName": "polygon-mainnet",
+      "contractAddress": "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+      "assetAddress": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+      "rateType": "aave",
+      "asset": "USDT"
+    },
+    {
+      "protocol": "moonwell",
+      "chain": "optimism",
+      "chainSelectorName": "ethereum-mainnet-optimism-1",
+      "contractAddress": "0xa3A53899EE8f9f6E963437C5B3f805FEc538BF84",
+      "assetAddress": "",
+      "rateType": "ctoken",
+      "asset": "USDT"
+    }
+  ],
+  "tvlApiBase": "https://api.llama.fi",
+  "targetChainSelectorName": "ethereum-testnet-sepolia",
+  "oracleAddresses": {
+    "USDC": "0x80Be9b18DCb40E216682aA8972b64F93a4716FE6",
+    "ETH": "0x8D7EBA5Ef17D69b234746fdbB9722EC52135B9A8",
+    "BTC": "0x1Ee00d2bd54C6200905BB4746bFDFB3eB4Be24fD",
+    "DAI": "0xdF989f502Ba3d9664c4a8B7bA675a0F34990b608",
+    "USDT": "0x2F565693410D51Be42c664B566F244EDe7Be772c"
+  },
+  "gasLimit": "500000",
+  "swapAddress": "0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291"
 }
