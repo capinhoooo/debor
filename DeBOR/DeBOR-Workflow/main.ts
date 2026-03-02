@@ -26,6 +26,7 @@ import { onSwapLifecycle, onBenchmarkUpdated, BENCHMARK_UPDATED_EVENT_SIG } from
 import { runPreflightCheck } from './preflightCheck'
 import { fetchConfidentialTVL } from './confidentialFetcher'
 import { runHttpValidation } from './httpValidator'
+import { runSOFRComparison } from './sofrComparator'
 import type { Config, AssetClass } from './types'
 
 const protocolSchema = z.object({
@@ -52,6 +53,9 @@ const configSchema = z.object({
   }),
   gasLimit: z.string(),
   swapAddress: z.string().optional(),
+  sofrApiBase: z.string().optional(),
+  sofrEndpoint: z.string().optional(),
+  effrEndpoint: z.string().optional(),
 })
 
 function parseTriggerTimestamp(payload: CronPayload): bigint {
@@ -395,6 +399,11 @@ const onHttpTrigger = (runtime: Runtime<Config>, payload: any): string => {
       return runHttpValidation(runtime)
     }
 
+    // Action dispatch: compare runs DeBOR vs SOFR/EFFR TradFi comparison
+    if (request.action === 'compare') {
+      return runSOFRComparison(runtime)
+    }
+
     if (request.asset && ['USDC', 'ETH', 'BTC', 'DAI', 'USDT', 'ALL'].includes(request.asset)) {
       asset = request.asset
     }
@@ -446,7 +455,7 @@ const onPreflightCheck = (runtime: Runtime<Config>, payload: CronPayload): strin
       ? prices.usdcUsd - 100000000n
       : 100000000n - prices.usdcUsd
     const deviationBps = (pegDeviation * 10000n) / 100000000n
-    if (deviationBps > 50n) { 
+    if (deviationBps > 50n) {
       runtime.log(`  WARNING: USDC de-peg detected! ${deviationBps}bps deviation`)
     }
   }

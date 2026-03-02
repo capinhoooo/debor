@@ -402,5 +402,8 @@
     "USDT": "0x2F565693410D51Be42c664B566F244EDe7Be772c"
   },
   "gasLimit": "500000",
-  "swapAddress": "0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291"
+  "swapAddress": "0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291",
+  "sofrApiBase": "https://markets.newyorkfed.org/api",
+  "sofrEndpoint": "/rates/secured/sofr/last/1.json",
+  "effrEndpoint": "/rates/unsecured/effr/last/1.json"
 }

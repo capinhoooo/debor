@@ -62,3 +62,39 @@ export interface Config {
   gasLimit: string
   swapAddress?: string
 }
+
+export interface SOFRData {
+  rate: number 
+  rateBps: number
+  date: string
+  volumeBillions: number
+  percentile1: number
+  percentile99: number
+}
+
+export interface EFFRData {
+  rate: number
+  rateBps: number
+  date: string
+  targetFrom: number
+  targetTo: number
+}
+
+export type MarketRegime = 'CONVERGED' | 'NORMAL' | 'DIVERGED' | 'DISLOCATED'
+
+export interface AssetComparison {
+  asset: string
+  deborRate: number
+  sofrRate: number
+  effrRate: number
+  defiPremium: number 
+  regime: MarketRegime
+}
+
+export interface SOFRComparisonResult {
+  sofr: SOFRData
+  effr: EFFRData
+  comparisons: AssetComparison[]
+  avgStablePremium: number
+  summary: string
+}

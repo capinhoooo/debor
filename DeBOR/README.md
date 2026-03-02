@@ -18,7 +18,8 @@ DeBOR/                          <- You are here (CRE project root)
     ├── swapManager.ts          # IRS lifecycle (settle, liquidate, spike detect)
     ├── preflightCheck.ts       # Health monitoring (chain liveness, balances, gas)
     ├── confidentialFetcher.ts  # TEE-based TVL via ConfidentialHTTPClient
-    ├── httpValidator.ts        # HTTP validation + cross-check layer
+    ├── httpValidator.ts        # HTTP validation + cross-check layer (8 steps incl. SOFR)
+    ├── sofrComparator.ts       # SOFR/EFFR comparison via NY Fed API
     ├── types.ts                # TypeScript type definitions
     ├── abis.ts                 # Contract ABIs (Aave, Compound, Morpho, CToken, Chainlink, DeBOR)
     ├── config.staging.json     # 43 protocol sources + 5 oracle addresses
@@ -76,9 +77,13 @@ cre workflow simulate ./DeBOR --non-interactive --trigger-index 6    # Pre-fligh
 cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
   --http-payload '{"asset":"USDC"}'                                  # Single asset
 
-# HTTP validation layer
+# HTTP validation layer (8-step cross-check + SOFR cross-reference)
 cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
   --http-payload '{"action":"validate"}'                             # Cross-validation
+
+# SOFR/EFFR comparison (DeFi vs TradFi benchmark analysis)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
+  --http-payload '{"action":"compare"}'                              # SOFR comparison
 
 # EVM Log anomaly detector (requires tx hash)
 cre workflow simulate ./DeBOR --non-interactive --trigger-index 9 \
@@ -102,7 +107,8 @@ Every file in this project that uses Chainlink technology:
 | [`DeBOR-Workflow/swapManager.ts`](debor/swapManager.ts) | EVMClient (9 methods: callContract, writeReport, filterLogs, headerByNumber, getTransactionReceipt, getTransactionByHash), prepareReportRequest |
 | [`DeBOR-Workflow/preflightCheck.ts`](debor/preflightCheck.ts) | EVMClient.headerByNumber, EVMClient.balanceAt (x2), EVMClient.estimateGas, runtime.now() |
 | [`DeBOR-Workflow/confidentialFetcher.ts`](debor/confidentialFetcher.ts) | ConfidentialHTTPClient (TEE-based with VaultDON secrets) |
-| [`DeBOR-Workflow/httpValidator.ts`](debor/httpValidator.ts) | CRE consensus aggregation, oracle reads, sanity validation, TVL cross-check, historical consistency |
+| [`DeBOR-Workflow/httpValidator.ts`](debor/httpValidator.ts) | CRE consensus aggregation, oracle reads, sanity validation, TVL cross-check, historical consistency, SOFR cross-reference, sendReport |
+| [`DeBOR-Workflow/sofrComparator.ts`](debor/sofrComparator.ts) | HTTPClient + ConsensusAggregationByFields (identical + ignore), NY Fed SOFR/EFFR API, market regime classification |
 | [`DeBOR-Workflow/abis.ts`](debor/abis.ts) | CHAINLINK_PRICE_FEED_ABI (latestRoundData, decimals) |
 
 **Total: 30+ CRE capabilities used across 10 handlers with 3 trigger types (Cron + HTTP + EVM Log).**

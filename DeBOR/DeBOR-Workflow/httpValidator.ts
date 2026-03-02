@@ -24,14 +24,16 @@ import {
 } from '@chainlink/cre-sdk'
 import { encodeAbiParameters, parseAbiParameters, encodeFunctionData, decodeFunctionResult, zeroAddress, type Address } from 'viem'
 import { DEBOR_ORACLE_READ_ABI } from './abis'
+import { sofrCrossReference } from './sofrComparator'
 import type { Config, AssetClass } from './types'
 
 const ASSETS: AssetClass[] = ['USDC', 'ETH', 'BTC', 'DAI', 'USDT']
 const STABLECOINS: AssetClass[] = ['USDC', 'DAI', 'USDT']
-const RATE_MIN_BPS = 1n 
-const RATE_MAX_BPS = 5000n
-const STABLECOIN_SPREAD_THRESHOLD = 200
+const RATE_MIN_BPS = 1n     // 0.01% — below this is likely stale/broken
+const RATE_MAX_BPS = 5000n  // 50% — above this is likely manipulated
+const STABLECOIN_SPREAD_THRESHOLD = 200 // stablecoins should be within 200bps of each other
 
+// DeFiLlama TVL cross-check (small response, proven to work)
 interface TVLCheck {
   slug: string
   tvl: number
@@ -236,7 +238,7 @@ export function runHttpValidation(runtime: Runtime<Config>): string {
   runtime.log('Step 6: DON consensus validation (4 top-level + 5 field-level strategies)...')
   let consensusChecks = 0
 
-  // 6: consensusIdenticalAggregation — all nodes MUST agree on config
+  // 6a: consensusIdenticalAggregation — all nodes MUST agree on config
   // If any node has a different config, consensus fails → handler aborts (safety!)
   try {
     const configHash = runtime.runInNodeMode(
@@ -252,7 +254,7 @@ export function runHttpValidation(runtime: Runtime<Config>): string {
     runtime.log(`  6a [identical]: ${e} (expected in simulation)`)
   }
 
-  // 6: consensusMedianAggregation — median of node-local protocol counts
+  // 6b: consensusMedianAggregation — median of node-local protocol counts
   // Ensures statistical agreement even if nodes enumerate configs slightly differently
   try {
     const medianCount = runtime.runInNodeMode(
@@ -265,7 +267,7 @@ export function runHttpValidation(runtime: Runtime<Config>): string {
     runtime.log(`  6b [median]: ${e} (expected in simulation)`)
   }
 
-  // 6: consensusCommonPrefixAggregation — longest common prefix of asset names
+  // 6c: consensusCommonPrefixAggregation — longest common prefix of asset names
   // Nodes may see different tail-end assets if config propagation is in-flight;
   // commonPrefix guarantees agreement on the established head of the list
   try {
@@ -280,7 +282,7 @@ export function runHttpValidation(runtime: Runtime<Config>): string {
     runtime.log(`  6c [commonPrefix]: ${e} (expected in simulation)`)
   }
 
-  // 6: consensusCommonSuffixAggregation — common suffix of oracle addresses
+  // 6d: consensusCommonSuffixAggregation — common suffix of oracle addresses
   // If nodes disagree on earlier (deprecated) addresses but agree on the latest,
   // commonSuffix ensures the most recently deployed oracles are canonical
   try {
@@ -303,11 +305,11 @@ export function runHttpValidation(runtime: Runtime<Config>): string {
   //   commonSuffix() — array suffix matching on oracle list
   //   ignore()       — intentionally skip consensus on node-local data
   interface FieldConsensusDemo {
-    configFingerprint: string 
-    protocolCount: number 
-    assetNames: string[] 
-    oracleAddrs: string[]
-    nodeLocalTimestamp: number
+    configFingerprint: string   // identical — must match exactly
+    protocolCount: number       // median — statistical consensus
+    assetNames: string[]        // commonPrefix — ordered list agreement
+    oracleAddrs: string[]       // commonSuffix — most-recent agreement
+    nodeLocalTimestamp: number   // ignore — each node's clock (no consensus needed)
   }
 
   try {
@@ -359,6 +361,8 @@ export function runHttpValidation(runtime: Runtime<Config>): string {
       .report(prepareReportRequest(validationPayload))
       .result()
 
+    // sendReport: send DON-signed report to off-chain webhook
+    // The callback receives the signed report and builds an HTTP request
     const httpClient = new cre.capabilities.HTTPClient()
     httpClient.sendReport(
       runtime,
@@ -385,10 +389,22 @@ export function runHttpValidation(runtime: Runtime<Config>): string {
     runtime.log(`  sendReport: ${e} (expected — no real webhook in simulation)`)
   }
 
+  // ─── Step 8: SOFR/EFFR Cross-Reference (NY Fed API) ───
+  // Fetches real SOFR and EFFR rates from the Federal Reserve Bank of New York,
+  // compares stablecoin DeBOR rates against TradFi benchmarks, and flags
+  // unusual divergences (DeFi below SOFR or >200bps dislocation).
+  try {
+    const sofrWarnings = sofrCrossReference(runtime, oracleRates)
+    warnings.push(...sofrWarnings)
+  } catch (e) {
+    runtime.log(`  Step 8 SOFR cross-reference failed: ${e}`)
+  }
+
+  // ─── Summary ───
   const summary =
     warnings.length > 0
       ? `VALIDATION: ${warnings.length} warnings [${warnings.join(', ')}] | consensus=${consensusChecks}/5`
-      : `VALIDATION: All OK, TVLs healthy, consensus=${consensusChecks}/5`
+      : `VALIDATION: All OK, TVLs healthy, SOFR cross-checked, consensus=${consensusChecks}/5`
 
   runtime.log(`=== ${summary} ===`)
   return summary

@@ -157,22 +157,56 @@ CRE-native swap lifecycle manager. Exports a unified `onSwapLifecycle` handler (
 
 ### [`httpValidator.ts`](httpValidator.ts) — HTTP Validation & Cross-Check Layer
 
-HTTP-triggered validation pipeline that cross-checks oracle data against external sources.
+HTTP-triggered validation pipeline that cross-checks oracle data against external sources including SOFR from the NY Fed.
 
 **Chainlink CRE usage:**
 - `EVMClient.callContract()` — reads all 5 oracle benchmarks for validation
-- CRE consensus aggregation for DON-agreed validation results
+- CRE consensus aggregation for DON-agreed validation results (4 top-level + 5 field-level)
+- `HTTPClient.sendRequest()` — DeFiLlama TVL cross-check + SOFR cross-reference
+- `runtime.report()` + `HTTPClient.sendReport()` — DON-signed validation report distribution
 - Sanity checks: rate bounds, stablecoin spread limits, source count minimums
-- TVL cross-validation against DeFiLlama API
-- Historical consistency checks against ring buffer data
+- SOFR cross-reference: compares stablecoin DeBOR rates against TradFi benchmark
 
-**6-step validation:**
+**8-step validation:**
 1. Oracle reads — current benchmark for all 5 assets
 2. Sanity checks — rate bounds (0-5000bps), source minimums
 3. Stablecoin spread — USDC/DAI/USDT spread should be <200bps
 4. TVL cross-check — DeFiLlama protocol TVL validation
 5. Historical consistency — rate vs 7d average deviation
-6. Consensus summary — aggregated pass/fail report
+6. DON consensus — 4 top-level + 5 field-level strategies
+7. DON-signed report — sendReport distribution to webhook
+8. SOFR cross-reference — stablecoin rates vs NY Fed SOFR (flags >50bps below or >200bps dislocation)
+
+### [`sofrComparator.ts`](sofrComparator.ts) — SOFR/EFFR TradFi Comparison
+
+Compares DeBOR rates against real TradFi benchmark rates from the Federal Reserve Bank of New York. Provides the "DeFi vs TradFi" narrative that makes DeBOR meaningful to institutional users.
+
+**Chainlink CRE usage:**
+- `HTTPClient.sendRequest()` — fetches SOFR and EFFR from NY Fed Markets API with DON consensus
+- `ConsensusAggregationByFields()` — `identical()` on rate/date fields (all DON nodes see same Fed data), `ignore()` on fetchedAt (node-local)
+- `.withDefault()` — graceful fallback when API is unavailable
+- `EVMClient.callContract()` — reads 5 oracle rates for comparison (in compare mode)
+
+**External APIs:**
+- SOFR: `https://markets.newyorkfed.org/api/rates/secured/sofr/last/1.json` (free, no auth)
+- EFFR: `https://markets.newyorkfed.org/api/rates/unsecured/effr/last/1.json` (free, no auth)
+
+**Market regime classification:**
+- `CONVERGED` (<10bps) — DeFi and TradFi rates aligned
+- `NORMAL` (10-50bps) — typical DeFi premium
+- `DIVERGED` (50-200bps) — significant DeFi-TradFi gap
+- `DISLOCATED` (>200bps) — market stress or manipulation
+
+**Exported functions:**
+- `fetchSOFR(runtime)` — fetches SOFR rate with DON consensus
+- `fetchEFFR(runtime)` — fetches EFFR (Fed Funds Rate) with DON consensus
+- `classifyRegime(defiPremiumBps)` — returns market regime classification
+- `runSOFRComparison(runtime)` — full comparison: reads 5 oracle rates + SOFR + EFFR, computes per-asset DeFi premium
+- `sofrCrossReference(runtime, oracleRates)` — lightweight SOFR-only check for the validate action (1 HTTP call)
+
+**HTTP budget:**
+- Compare action: 2 HTTP calls (SOFR + EFFR) — runs as standalone action
+- Validate action: 1 HTTP call (SOFR only) — fits within 5 HTTP limit (3 TVL + 1 sendReport + 1 SOFR)
 
 ### [`preflightCheck.ts`](preflightCheck.ts) — Health Monitoring
 
@@ -218,7 +252,12 @@ TypeScript types shared across all modules:
 - `WeightedRate`: rate + TVL weight (for benchmark computation)
 - `DeBORMetrics`: 8-field benchmark output (rate, supply, spread, vol, term7d, numSources, sourcesConfigured)
 - `PriceContext`: Chainlink price feed results (ETH/USD, BTC/USD, USDC/USD)
-- `Config`: workflow configuration schema
+- `Config`: workflow configuration schema (incl. optional sofrApiBase, sofrEndpoint, effrEndpoint)
+- `SOFRData`: SOFR rate data (rate, rateBps, date, volumeBillions, percentiles)
+- `EFFRData`: EFFR rate data (rate, rateBps, date, target range)
+- `MarketRegime`: `'CONVERGED' | 'NORMAL' | 'DIVERGED' | 'DISLOCATED'`
+- `AssetComparison`: per-asset DeFi vs TradFi comparison
+- `SOFRComparisonResult`: full comparison output
 
 ### [`abis.ts`](abis.ts) — Contract ABIs
 
@@ -235,7 +274,7 @@ ABI definitions for all on-chain interactions:
 
 ### [`config.staging.json`](config.staging.json) — Source Configuration
 
-43 protocol rate sources across 6 chains + 5 oracle deployment addresses:
+43 protocol rate sources across 6 chains + 5 oracle deployment addresses + NY Fed API config:
 - 14 USDC sources (Aave x6, Compound x3, Spark x1, Morpho x1, Moonwell x2, Benqi x1)
 - 10 ETH sources (Aave x6, Compound x1, Spark x1, Moonwell x2)
 - 5 BTC sources (Aave x4, Benqi x1)
@@ -269,6 +308,10 @@ cre workflow simulate ./DeBOR --non-interactive --trigger-index 5    # Swap life
 cre workflow simulate ./DeBOR --non-interactive --trigger-index 6    # Pre-flight + prices
 cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
   --http-payload '{"asset":"USDC"}'                                  # HTTP trigger
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
+  --http-payload '{"action":"validate"}'                             # Validation + SOFR cross-ref
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
+  --http-payload '{"action":"compare"}'                              # SOFR/EFFR comparison
 cre workflow simulate ./DeBOR --non-interactive --trigger-index 8    # USDC ext merge (14/14)
 cre workflow simulate ./DeBOR --non-interactive --trigger-index 9 \
   --evm-tx-hash <TX_HASH> --evm-event-index 0                       # EVM Log trigger
@@ -296,7 +339,7 @@ cre workflow simulate ./DeBOR --non-interactive --trigger-index 9 \
 Add `--target staging-settings --broadcast` to submit real transactions on-chain:
 
 ```bash
-# From the DeBOR/ project root (parent of this directory)
+# From the debor/ project root (parent of this directory)
 cd /path/to/DeBOR/DeBOR-Workflow
 
 cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 0 --broadcast   # USDC core
