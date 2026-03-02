@@ -254,23 +254,23 @@ Workflow name, entry point, config path, and target settings for `cre workflow s
 
 ```bash
 # From the debor/ project root (parent of this directory)
-cd /path/to/debor/debor
+cd /path/to/DeBOR/DeBOR-Workflow
 
 # Install dependencies
-cd debor && bun install && cd ..
+cd DeBOR && bun install && cd ..
 
 # Simulate any handler by trigger index (0-9)
-cre workflow simulate ./debor --non-interactive --trigger-index 0    # USDC core (10 sources)
-cre workflow simulate ./debor --non-interactive --trigger-index 1    # ETH (10 sources)
-cre workflow simulate ./debor --non-interactive --trigger-index 2    # BTC (5 sources)
-cre workflow simulate ./debor --non-interactive --trigger-index 3    # DAI (8 sources)
-cre workflow simulate ./debor --non-interactive --trigger-index 4    # USDT (6 sources)
-cre workflow simulate ./debor --non-interactive --trigger-index 5    # Swap lifecycle manager
-cre workflow simulate ./debor --non-interactive --trigger-index 6    # Pre-flight + prices
-cre workflow simulate ./debor --non-interactive --trigger-index 7 \
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 0    # USDC core (10 sources)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 1    # ETH (10 sources)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 2    # BTC (5 sources)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 3    # DAI (8 sources)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 4    # USDT (6 sources)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 5    # Swap lifecycle manager
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 6    # Pre-flight + prices
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
   --http-payload '{"asset":"USDC"}'                                  # HTTP trigger
-cre workflow simulate ./debor --non-interactive --trigger-index 8    # USDC ext merge (14/14)
-cre workflow simulate ./debor --non-interactive --trigger-index 9 \
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 8    # USDC ext merge (14/14)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 9 \
   --evm-tx-hash <TX_HASH> --evm-event-index 0                       # EVM Log trigger
 ```
 
@@ -296,15 +296,15 @@ cre workflow simulate ./debor --non-interactive --trigger-index 9 \
 Add `--target staging-settings --broadcast` to submit real transactions on-chain:
 
 ```bash
-# From the debor/ project root (parent of this directory)
-cd /path/to/debor/debor
+# From the DeBOR/ project root (parent of this directory)
+cd /path/to/DeBOR/DeBOR-Workflow
 
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 0 --broadcast   # USDC core
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 1 --broadcast   # ETH
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 2 --broadcast   # BTC
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 3 --broadcast   # DAI
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 4 --broadcast   # USDT
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 8 --broadcast   # USDC ext (14/14)
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 0 --broadcast   # USDC core
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 1 --broadcast   # ETH
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 2 --broadcast   # BTC
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 3 --broadcast   # DAI
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 4 --broadcast   # USDT
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 8 --broadcast   # USDC ext (14/14)
 ```
 
 Run trigger 8 (USDC ext) AFTER trigger 0 (USDC core) — it merges core + extended sources into 14/14.

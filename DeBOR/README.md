@@ -7,10 +7,10 @@ This is the Chainlink CRE (Compute Runtime Environment) project root. It contain
 ## Structure
 
 ```
-debor/                          <- You are here (CRE project root)
+DeBOR/                          <- You are here (CRE project root)
 ├── project.yaml                # RPC endpoints for 7 chains (6 mainnet + 1 testnet)
 ├── secrets.yaml                # VaultDON secret references
-└── debor/                      # Workflow source code
+└── DeBOR-Workflow/                      # Workflow source code
     ├── main.ts                 # 10 handler registrations + entry point
     ├── rateReader.ts           # Protocol rate reads + Chainlink Price Feeds
     ├── tvlFetcher.ts           # DeFiLlama TVL with DON consensus
@@ -56,32 +56,32 @@ VaultDON secret references for ConfidentialHTTPClient:
 ## How to Simulate
 
 ```bash
-# From this directory (debor/)
+# From this directory (DeBOR/)
 
 # Benchmark handlers (reads real mainnet rates)
-cre workflow simulate ./debor --non-interactive --trigger-index 0    # USDC core (10 sources)
-cre workflow simulate ./debor --non-interactive --trigger-index 1    # ETH (10 sources)
-cre workflow simulate ./debor --non-interactive --trigger-index 2    # BTC (5 sources)
-cre workflow simulate ./debor --non-interactive --trigger-index 3    # DAI (8 sources)
-cre workflow simulate ./debor --non-interactive --trigger-index 4    # USDT (6 sources)
-cre workflow simulate ./debor --non-interactive --trigger-index 8    # USDC ext merge (14/14)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 0    # USDC core (10 sources)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 1    # ETH (10 sources)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 2    # BTC (5 sources)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 3    # DAI (8 sources)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 4    # USDT (6 sources)
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 8    # USDC ext merge (14/14)
 
 # Swap lifecycle (merged: settle + liquidation + spike)
-cre workflow simulate ./debor --non-interactive --trigger-index 5    # Swap lifecycle manager
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 5    # Swap lifecycle manager
 
 # Pre-flight health monitor + Chainlink prices
-cre workflow simulate ./debor --non-interactive --trigger-index 6    # Pre-flight check
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 6    # Pre-flight check
 
 # HTTP on-demand refresh
-cre workflow simulate ./debor --non-interactive --trigger-index 7 \
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
   --http-payload '{"asset":"USDC"}'                                  # Single asset
 
 # HTTP validation layer
-cre workflow simulate ./debor --non-interactive --trigger-index 7 \
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
   --http-payload '{"action":"validate"}'                             # Cross-validation
 
 # EVM Log anomaly detector (requires tx hash)
-cre workflow simulate ./debor --non-interactive --trigger-index 9 \
+cre workflow simulate ./DeBOR --non-interactive --trigger-index 9 \
   --evm-tx-hash <TX_HASH> --evm-event-index 0                       # Anomaly detector
 ```
 
@@ -95,19 +95,19 @@ Every file in this project that uses Chainlink technology:
 |------|-----------------|
 | `project.yaml` | CRE project config — RPC endpoints for 7 chain selectors |
 | `secrets.yaml` | VaultDON secret references |
-| [`debor/main.ts`](debor/main.ts) | CRE Runner, 3 trigger types (Cron + HTTP + EVM Log), runtime.report, runtime.getSecret, runtime.runInNodeMode, consensusMedianAggregation, safeJsonStringify, LATEST_BLOCK_NUMBER, hexToBase64 |
-| [`debor/rateReader.ts`](debor/rateReader.ts) | EVMClient.callContract (43 source reads), Chainlink Price Feeds (ETH/USD, BTC/USD, USDC/USD), isChainSelectorSupported |
-| [`debor/tvlFetcher.ts`](debor/tvlFetcher.ts) | HTTPClient + ConsensusAggregationByFields (median + identical + ignore) |
-| [`debor/benchmarkEngine.ts`](debor/benchmarkEngine.ts) | safeJsonStringify, UInt64 |
-| [`debor/swapManager.ts`](debor/swapManager.ts) | EVMClient (9 methods: callContract, writeReport, filterLogs, headerByNumber, getTransactionReceipt, getTransactionByHash), prepareReportRequest |
-| [`debor/preflightCheck.ts`](debor/preflightCheck.ts) | EVMClient.headerByNumber, EVMClient.balanceAt (x2), EVMClient.estimateGas, runtime.now() |
-| [`debor/confidentialFetcher.ts`](debor/confidentialFetcher.ts) | ConfidentialHTTPClient (TEE-based with VaultDON secrets) |
-| [`debor/httpValidator.ts`](debor/httpValidator.ts) | CRE consensus aggregation, oracle reads, sanity validation, TVL cross-check, historical consistency |
-| [`debor/abis.ts`](debor/abis.ts) | CHAINLINK_PRICE_FEED_ABI (latestRoundData, decimals) |
+| [`DeBOR-Workflow/main.ts`](debor/main.ts) | CRE Runner, 3 trigger types (Cron + HTTP + EVM Log), runtime.report, runtime.getSecret, runtime.runInNodeMode, consensusMedianAggregation, safeJsonStringify, LATEST_BLOCK_NUMBER, hexToBase64 |
+| [`DeBOR-Workflow/rateReader.ts`](debor/rateReader.ts) | EVMClient.callContract (43 source reads), Chainlink Price Feeds (ETH/USD, BTC/USD, USDC/USD), isChainSelectorSupported |
+| [`DeBOR-Workflow/tvlFetcher.ts`](debor/tvlFetcher.ts) | HTTPClient + ConsensusAggregationByFields (median + identical + ignore) |
+| [`DeBOR-Workflow/benchmarkEngine.ts`](debor/benchmarkEngine.ts) | safeJsonStringify, UInt64 |
+| [`DeBOR-Workflow/swapManager.ts`](debor/swapManager.ts) | EVMClient (9 methods: callContract, writeReport, filterLogs, headerByNumber, getTransactionReceipt, getTransactionByHash), prepareReportRequest |
+| [`DeBOR-Workflow/preflightCheck.ts`](debor/preflightCheck.ts) | EVMClient.headerByNumber, EVMClient.balanceAt (x2), EVMClient.estimateGas, runtime.now() |
+| [`DeBOR-Workflow/confidentialFetcher.ts`](debor/confidentialFetcher.ts) | ConfidentialHTTPClient (TEE-based with VaultDON secrets) |
+| [`DeBOR-Workflow/httpValidator.ts`](debor/httpValidator.ts) | CRE consensus aggregation, oracle reads, sanity validation, TVL cross-check, historical consistency |
+| [`DeBOR-Workflow/abis.ts`](debor/abis.ts) | CHAINLINK_PRICE_FEED_ABI (latestRoundData, decimals) |
 
 **Total: 30+ CRE capabilities used across 10 handlers with 3 trigger types (Cron + HTTP + EVM Log).**
 
-See [`debor/README.md`](debor/README.md) for detailed file-by-file documentation.
+See [`DeBOR/README.md`](debor/README.md) for detailed file-by-file documentation.
 
 ---
 
@@ -116,13 +116,13 @@ See [`debor/README.md`](debor/README.md) for detailed file-by-file documentation
 Add `--target staging-settings --broadcast` to write real mainnet rates on-chain:
 
 ```bash
-# From this directory (debor/)
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 0 --broadcast   # USDC core
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 1 --broadcast   # ETH
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 2 --broadcast   # BTC
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 3 --broadcast   # DAI
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 4 --broadcast   # USDT
-cre workflow simulate ./debor --target staging-settings --non-interactive --trigger-index 8 --broadcast   # USDC ext (14/14)
+# From this directory (DeBOR/)
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 0 --broadcast   # USDC core
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 1 --broadcast   # ETH
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 2 --broadcast   # BTC
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 3 --broadcast   # DAI
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 4 --broadcast   # USDT
+cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 8 --broadcast   # USDC ext (14/14)
 ```
 
 Without `--broadcast`, `writeReport` returns mock tx hash. With `--broadcast`, real transactions hit Sepolia. All reads are always real mainnet data.
