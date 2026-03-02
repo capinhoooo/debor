@@ -13,7 +13,7 @@ The core on-chain oracle. Receives TVL-weighted benchmark rates from the CRE wor
 **Chainlink integration:**
 - Inherits [`ReceiverTemplate.sol`](src/ReceiverTemplate.sol) — validates that reports come from the authorized CRE Forwarder (`0x15fC6ae953E024d975e77382eEeC56A9101f9F88`)
 - `onReport(metadata, report)` → `_processReport(report)` — CRE report receiver pattern
-- Emits `BenchmarkUpdated` event consumed by CRE's rate spike detector (Handler 7)
+- Emits `BenchmarkUpdated` event consumed by CRE's anomaly detector (Handler 9, EVM Log trigger)
 
 **Storage:**
 - 8 real-time metrics: `deborRate`, `deborSupply`, `deborSpread`, `deborVol`, `deborTerm7d`, `lastUpdated`, `numSources`, `sourcesConfigured`
