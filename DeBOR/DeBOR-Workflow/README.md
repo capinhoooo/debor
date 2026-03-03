@@ -15,7 +15,7 @@ The Chainlink CRE (Compute Runtime Environment) workflow that powers DeBOR. This
 | 4 | USDT Benchmark | Cron | `:18, :48` every hour | [`main.ts`](main.ts) |
 | 5 | Swap Lifecycle Manager | Cron | `:05, :35` every hour | [`swapManager.ts`](swapManager.ts) |
 | 6 | Pre-flight + Prices | Cron | `:25, :55` every hour | [`main.ts`](main.ts) |
-| 7 | HTTP On-Demand | HTTP | On request | [`main.ts`](main.ts) |
+| 7 | HTTP On-Demand (5 actions) | HTTP | On request | [`main.ts`](main.ts) |
 | 8 | USDC Ext Merge | Cron | `:02, :32` every hour | [`main.ts`](main.ts) |
 | 9 | Anomaly Detector | EVM Log | BenchmarkUpdated event | [`swapManager.ts`](swapManager.ts) |
 
@@ -208,6 +208,56 @@ Compares DeBOR rates against real TradFi benchmark rates from the Federal Reserv
 - Compare action: 2 HTTP calls (SOFR + EFFR) — runs as standalone action
 - Validate action: 1 HTTP call (SOFR only) — fits within 5 HTTP limit (3 TVL + 1 sendReport + 1 SOFR)
 
+### [`riskAnalyst.ts`](riskAnalyst.ts) — Risk & Compliance Engine
+
+On-demand risk analysis triggered via `action="risk"`. Computes institutional-grade risk metrics from live oracle data.
+
+**Chainlink CRE usage:**
+- `EVMClient.callContract()` — reads all 5 oracle benchmarks (5 calls) + 5 historical rates for VaR (5 calls) = 10 EVM calls
+- `HTTPClient` + `ConsensusAggregationByFields` — fetches protocol TVL for HHI computation (up to 5 HTTP calls)
+- `fetchSOFR(runtime)` — SOFR comparison for TradFi spread (1 HTTP call via sofrComparator)
+
+**Risk metrics computed:**
+- **VaR/CVaR** (parametric): 95% and 99% Value-at-Risk and Conditional VaR from realized rate volatility
+- **HHI** (Herfindahl-Hirschman Index): Source concentration from TVL weights (DOJ merger guideline thresholds)
+- **Basel IRRBB stress tests** (BCBS 368): Parallel up/down (+/-200bps), short rate shocks (+/-300bps), source failure, TVL collapse
+- **Composite risk level**: Weighted scoring across VaR, HHI, source uptime, SOFR spread, cross-protocol vol → LOW/MEDIUM/HIGH/CRITICAL
+- **Market regime**: CONVERGED/NORMAL/DIVERGED/DISLOCATED based on DeFi-TradFi spread
+
+**Resource budget:** 10 EVM calls + 5 HTTP calls (at CRE limits)
+
+### [`aiAnalyst.ts`](aiAnalyst.ts) — AI Market Intelligence
+
+On-demand LLM-powered market risk assessment triggered via `action="analyze"`. Uses Groq API with `llama-3.3-70b-versatile` model.
+
+**Chainlink CRE usage:**
+- `EVMClient.callContract()` — reads all 5 oracle benchmarks via `getFullBenchmark()` (5 EVM calls)
+- `HTTPClient.sendRequest()` — POST to Groq API for LLM inference (1 HTTP call, base64-encoded body, deprecated `headers` map)
+- `fetchSOFR(runtime)` — SOFR for TradFi context in the LLM prompt (1 HTTP call)
+
+**LLM prompt includes:**
+- Benchmark rates, spreads, cross-protocol volatility for all 5 assets
+- Source health (active/configured)
+- SOFR comparison and DeFi premium
+- 7-day trend direction
+
+**Structured output (7 fields):**
+- `riskLevel`: LOW/MEDIUM/HIGH/CRITICAL
+- `riskScore`: 0-100
+- `anomalyDetected`: boolean
+- `rateDirection`: RISING/FALLING/STABLE
+- `spreadHealth`: NORMAL/COMPRESSED/INVERTED
+- `explanation`: Free-text reason (<150 chars)
+- `analyzedAt`: timestamp
+
+**Resource budget:** 5 EVM calls + 2 HTTP calls (Groq + SOFR)
+
+**Technical notes:**
+- Uses `json_object` response format (not `json_schema` — unsupported by llama-3.3-70b)
+- Handles both camelCase and snake_case field names from LLM output
+- Falls back to safe defaults if LLM is unavailable
+- API key passed via `runtime.config.groqApiKey` (not `getSecret()` — unavailable in HTTP trigger context)
+
 ### [`preflightCheck.ts`](preflightCheck.ts) — Health Monitoring
 
 Pre-flight health checks using 5 CRE capabilities. Validates chain liveness and resource availability before benchmark updates.
@@ -292,28 +342,32 @@ Workflow name, entry point, config path, and target settings for `cre workflow s
 ## How to Simulate
 
 ```bash
-# From the debor/ project root (parent of this directory)
-cd /path/to/DeBOR/DeBOR-Workflow
+# From the DeBOR/ project root (parent of this directory)
+cd /path/to/DeBOR
 
 # Install dependencies
-cd DeBOR && bun install && cd ..
+cd DeBOR-Workflow && bun install && cd ..
 
 # Simulate any handler by trigger index (0-9)
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 0    # USDC core (10 sources)
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 1    # ETH (10 sources)
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 2    # BTC (5 sources)
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 3    # DAI (8 sources)
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 4    # USDT (6 sources)
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 5    # Swap lifecycle manager
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 6    # Pre-flight + prices
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 0    # USDC core (10 sources)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 1    # ETH (10 sources)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 2    # BTC (5 sources)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 3    # DAI (8 sources)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 4    # USDT (6 sources)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 5    # Swap lifecycle manager
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 6    # Pre-flight + prices
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 7 \
   --http-payload '{"asset":"USDC"}'                                  # HTTP trigger
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 7 \
   --http-payload '{"action":"validate"}'                             # Validation + SOFR cross-ref
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 7 \
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 7 \
   --http-payload '{"action":"compare"}'                              # SOFR/EFFR comparison
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 8    # USDC ext merge (14/14)
-cre workflow simulate ./DeBOR --non-interactive --trigger-index 9 \
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 7 \
+  --http-payload '{"action":"risk"}'                                 # Risk analysis (VaR/CVaR/HHI/Basel)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 7 \
+  --http-payload '{"action":"analyze"}'                              # AI market intelligence (Groq LLM)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 8    # USDC ext merge (14/14)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 9 \
   --evm-tx-hash <TX_HASH> --evm-event-index 0                       # EVM Log trigger
 ```
 
@@ -340,16 +394,54 @@ Add `--target staging-settings --broadcast` to submit real transactions on-chain
 
 ```bash
 # From the debor/ project root (parent of this directory)
-cd /path/to/DeBOR/DeBOR-Workflow
+cd /path/to/DeBOR
 
-cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 0 --broadcast   # USDC core
-cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 1 --broadcast   # ETH
-cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 2 --broadcast   # BTC
-cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 3 --broadcast   # DAI
-cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 4 --broadcast   # USDT
-cre workflow simulate ./DeBOR --target staging-settings --non-interactive --trigger-index 8 --broadcast   # USDC ext (14/14)
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 0 --broadcast   # USDC core
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 1 --broadcast   # ETH
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 2 --broadcast   # BTC
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 3 --broadcast   # DAI
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 4 --broadcast   # USDT
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 8 --broadcast   # USDC ext (14/14)
 ```
 
 Run trigger 8 (USDC ext) AFTER trigger 0 (USDC core) — it merges core + extended sources into 14/14.
 
 Without `--broadcast`, `writeReport` returns mock tx hash (`0x000...`). With `--broadcast`, real transactions are submitted to Sepolia via the deployer wallet. All `callContract` reads are always real mainnet data regardless.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────── CRE Workflow Engine ────────────────────────────────┐
+│                                                                                     │
+│  ┌─ Cron Triggers (0-6, 8) ──────────────────────────────────────────────────┐     │
+│  │ main.ts ─► rateReader.ts ─► tvlFetcher.ts ─► benchmarkEngine.ts          │     │
+│  │     │          │                  │                    │                   │     │
+│  │     │     43 EVM reads       DeFiLlama API      TVL-weighted avg          │     │
+│  │     │     (6 chains)         (DON consensus)     (bigint math)            │     │
+│  │     │                                                                     │     │
+│  │     ├─► swapManager.ts  (settle + liquidate + spike detect)               │     │
+│  │     ├─► preflightCheck.ts (liveness, balances, gas estimation)            │     │
+│  │     └─► confidentialFetcher.ts (TEE + VaultDON secrets)                   │     │
+│  └───────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                     │
+│  ┌─ HTTP Trigger (7) ── 5 Actions ──────────────────────────────────────────┐     │
+│  │  "asset"    ─► rateReader + tvlFetcher + benchmarkEngine (single asset)  │     │
+│  │  "validate" ─► httpValidator.ts (8-step cross-check + SOFR)              │     │
+│  │  "compare"  ─► sofrComparator.ts (DeFi vs TradFi: SOFR + EFFR)          │     │
+│  │  "risk"     ─► riskAnalyst.ts (VaR/CVaR, HHI, Basel stress tests)       │     │
+│  │  "analyze"  ─► aiAnalyst.ts (Groq LLM market intelligence)              │     │
+│  └──────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                     │
+│  ┌─ EVM Log Trigger (9) ────────────────────────────────────────────────────┐     │
+│  │  BenchmarkUpdated event ─► swapManager.onBenchmarkUpdated (anomaly)      │     │
+│  └──────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                     │
+│  External Data Sources:                                                             │
+│    DeFiLlama API ─── NY Fed SOFR/EFFR API ─── Groq LLM API                        │
+│    Chainlink Price Feeds (ETH/BTC/USDC on Ethereum Mainnet)                        │
+│                                                                                     │
+│  Output ──► DON-signed reports ──► Sepolia Oracles (5) + DeBORSwap                 │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```

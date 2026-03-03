@@ -175,12 +175,25 @@ function getHistoricalRate(uint256 periodsBack) external view returns (uint256)
 Demo consumer showing how protocols would use DeBOR as a benchmark. Implements dynamic rate adjustment and adaptive collateral ratios.
 
 **DeBOR integration:**
-- Reads `debor.getRate()`, `debor.getSpread()`, `debor.getVolatility()`
+- Reads `debor.getRate()`, `debor.getSpread()`, `debor.getVolatility()`, `debor.getFullBenchmark()`
 - `getCurrentBorrowRate()` — benchmark + base spread + volatility premium
 - `getAdaptiveCollateralRatio()` — increases collateral requirements when spread widens
 - Market regime classification: STABLE / NORMAL / VOLATILE / CRISIS
 
-**Deployed:** [`0x7BA1BF282bE87cA4D549Dd35C2C9163e2C4833d3`](https://sepolia.etherscan.io/address/0x7BA1BF282bE87cA4D549Dd35C2C9163e2C4833d3) (Sepolia)
+**New risk functions (v2):**
+```solidity
+function getRiskScore() public view returns (uint256 score)
+// Composite 0-100 risk score from volatility (0-40), spread (0-30), source coverage (0-30)
+
+function getStressTestPnL(uint256 currentFixedRate, uint256 notional, int256 rateShockBps)
+    public view returns (int256 pnlImpact)
+// Simulates rate shock impact on a fixed-rate position (annualized PnL in notional units)
+
+function getSourceDiversityScore() public view returns (uint256 diversityBps)
+// Source health: (activeSources / configuredSources) * 10000 — 10000 = perfect coverage
+```
+
+**Deployed (v2):** [`0x47e08484BECbf33c8d25036cc4F46b2CD7799232`](https://eth-sepolia.blockscout.com/address/0x47e08484BECbf33c8d25036cc4F46b2CD7799232) (Sepolia)
 
 ---
 
@@ -255,6 +268,13 @@ forge script script/DeployCCIP.s.sol:DeployCCIP \
   --rpc-url sepolia --broadcast --verify
 ```
 
+### Redeploy Consumer (Sepolia)
+
+```bash
+forge script script/RedeployConsumer.s.sol:RedeployConsumer \
+  --rpc-url sepolia --broadcast --verify
+```
+
 ### Deploy Swap (Sepolia)
 
 ```bash
@@ -290,6 +310,16 @@ cast call 0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291 \
 # CCIP receiver rate on Base Sepolia
 cast call 0xf11b0c2c3C23eeBa32AB9a5340C767ccB152fA57 "getRate()(uint256)" \
   --rpc-url https://base-sepolia.infura.io/v3/YOUR_KEY
+
+# AdaptiveLending v2 — risk score (0-100)
+cast call 0x47e08484BECbf33c8d25036cc4F46b2CD7799232 "getRiskScore()(uint256)" --rpc-url $RPC
+
+# AdaptiveLending v2 — stress test PnL (rate shock of +200bps on 1 ETH notional at 350bps fixed)
+cast call 0x47e08484BECbf33c8d25036cc4F46b2CD7799232 \
+  "getStressTestPnL(uint256,uint256,int256)(int256)" 350 1000000000000000000 200 --rpc-url $RPC
+
+# AdaptiveLending v2 — source diversity (10000 = 100% sources active)
+cast call 0x47e08484BECbf33c8d25036cc4F46b2CD7799232 "getSourceDiversityScore()(uint256)" --rpc-url $RPC
 ```
 
 ---
@@ -306,8 +336,10 @@ cast call 0xf11b0c2c3C23eeBa32AB9a5340C767ccB152fA57 "getRate()(uint256)" \
      USDC/ETH/BTC/DAI/USDT              |
               |                          v
               v                    NFT Holders
-        DeBORConsumer            (ownerOf settlement)
-       (AdaptiveLending)
+        DeBORConsumer v2         (ownerOf settlement)
+       (AdaptiveLending +
+        riskScore, stressPnL,
+        diversityScore)
               |
               v
        DeBORCCIPSender ---- CCIP ----+--> DeBORCCIPReceiver (Base Sepolia)
