@@ -98,3 +98,60 @@ export interface SOFRComparisonResult {
   avgStablePremium: number
   summary: string
 }
+
+// --- Risk & Compliance Types ---
+
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+
+export interface StressResult {
+  scenario: string
+  shockedRate: number
+  impact: number
+  breachesVaR: boolean
+}
+
+export interface RiskMetrics {
+  // VaR (parametric from realized vol)
+  var95: number              // 95% 30-min VaR (bps)
+  var99: number              // 99% 30-min VaR (bps)
+  cvar95: number             // Conditional VaR / Expected Shortfall (bps)
+  cvar99: number
+
+  // Volatility
+  realizedVol: number        // Annualized temporal volatility (bps)
+  crossProtocolVol: number   // Existing deborVol (point-in-time disagreement)
+
+  // Concentration
+  protocolHHI: number        // 0-1 scale (lower = more diverse)
+  effectiveSources: number   // 1/HHI (higher = better)
+  maxSourceWeight: number    // Largest TVL share (0-1)
+
+  // Stress Tests
+  stressResults: StressResult[]
+
+  // TradFi Comparison
+  sofrSpread: number         // DeBOR - SOFR (bps)
+  regime: MarketRegime
+
+  // Source Health
+  sourceUptime: number       // numSources / configured (0-1)
+
+  // Overall
+  riskLevel: RiskLevel
+  summary: string
+}
+
+// --- CRE & AI Types ---
+
+export type RateDirection = 'RISING' | 'FALLING' | 'STABLE'
+export type SpreadHealth = 'NORMAL' | 'COMPRESSED' | 'INVERTED'
+
+export interface AIAnalysis {
+  riskLevel: string          // "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+  riskScore: number          // 0-100
+  anomalyDetected: boolean   // true | false
+  rateDirection: string      // "RISING" | "FALLING" | "STABLE"
+  spreadHealth: string       // "NORMAL" | "COMPRESSED" | "INVERTED"
+  explanation: string        // Free text (non-deterministic)
+  analyzedAt: number         // Timestamp (node-local)
+}
