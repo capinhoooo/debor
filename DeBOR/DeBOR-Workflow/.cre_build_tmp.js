@@ -17963,7 +17963,7 @@ function computeBenchmark(weightedRates, previousRates, sourcesConfigured = 0n) 
     sourcesConfigured: sourcesConfigured > 0n ? sourcesConfigured : n
   };
 }
-var BENCHMARK_UPDATED_EVENT_SIG = "0x93e5b8091bfc656c6c16d3aa65d80c3428f4674b4673129a4edafd342d20c0bb";
+var BENCHMARK_UPDATED_EVENT_SIG = "0x39b30b48c37c75c1a92ab0663ddea47330411f58b47a764238930f6f9bb0df16";
 var MAX_SWAPS_PER_BATCH = 10n;
 var RATE_SPIKE_THRESHOLD = 100n;
 function getSepoliaEvmClient(runtime2) {
@@ -18406,6 +18406,261 @@ function fetchConfidentialTVL(runtime2, protocolSlug) {
 }
 var ASSETS = ["USDC", "ETH", "BTC", "DAI", "USDT"];
 var STABLECOINS = ["USDC", "DAI", "USDT"];
+var SOFR_API_BASE = "https://markets.newyorkfed.org/api";
+var SOFR_ENDPOINT = "/rates/secured/sofr/last/1.json";
+var EFFR_ENDPOINT = "/rates/unsecured/effr/last/1.json";
+function fetchSOFRCallback(sendRequester, apiBase, endpoint) {
+  const url = `${apiBase}${endpoint}`;
+  const response = sendRequester.sendRequest({ url, method: "GET" }).result();
+  if (!ok(response)) {
+    return { rate: 0, rateBps: 0, date: "", volumeBillions: 0, percentile1: 0, percentile99: 0, fetchedAt: Date.now() };
+  }
+  const body = JSON.parse(text(response));
+  const ref = body.refRates?.[0];
+  if (!ref) {
+    return { rate: 0, rateBps: 0, date: "", volumeBillions: 0, percentile1: 0, percentile99: 0, fetchedAt: Date.now() };
+  }
+  return {
+    rate: ref.percentRate || 0,
+    rateBps: Math.round((ref.percentRate || 0) * 100),
+    date: ref.effectiveDate || "",
+    volumeBillions: ref.volumeInBillions || 0,
+    percentile1: ref.percentPercentile1 || 0,
+    percentile99: ref.percentPercentile99 || 0,
+    fetchedAt: Date.now()
+  };
+}
+function fetchSOFR(runtime2) {
+  const httpClient = new cre.capabilities.HTTPClient;
+  const apiBase = runtime2.config.sofrApiBase || SOFR_API_BASE;
+  const endpoint = runtime2.config.sofrEndpoint || SOFR_ENDPOINT;
+  const result = httpClient.sendRequest(runtime2, fetchSOFRCallback, ConsensusAggregationByFields({
+    rate: () => identical(),
+    rateBps: () => identical(),
+    date: () => identical(),
+    volumeBillions: () => identical(),
+    percentile1: () => identical(),
+    percentile99: () => identical(),
+    fetchedAt: () => ignore()
+  }).withDefault({
+    rate: 0,
+    rateBps: 0,
+    date: "",
+    volumeBillions: 0,
+    percentile1: 0,
+    percentile99: 0,
+    fetchedAt: 0
+  }))(apiBase, endpoint).result();
+  return {
+    rate: result.rate,
+    rateBps: result.rateBps,
+    date: result.date,
+    volumeBillions: result.volumeBillions,
+    percentile1: result.percentile1,
+    percentile99: result.percentile99
+  };
+}
+function fetchEFFRCallback(sendRequester, apiBase, endpoint) {
+  const url = `${apiBase}${endpoint}`;
+  const response = sendRequester.sendRequest({ url, method: "GET" }).result();
+  if (!ok(response)) {
+    return { rate: 0, rateBps: 0, date: "", targetFrom: 0, targetTo: 0, fetchedAt: Date.now() };
+  }
+  const body = JSON.parse(text(response));
+  const ref = body.refRates?.[0];
+  if (!ref) {
+    return { rate: 0, rateBps: 0, date: "", targetFrom: 0, targetTo: 0, fetchedAt: Date.now() };
+  }
+  return {
+    rate: ref.percentRate || 0,
+    rateBps: Math.round((ref.percentRate || 0) * 100),
+    date: ref.effectiveDate || "",
+    targetFrom: ref.targetRateFrom || 0,
+    targetTo: ref.targetRateTo || 0,
+    fetchedAt: Date.now()
+  };
+}
+function fetchEFFR(runtime2) {
+  const httpClient = new cre.capabilities.HTTPClient;
+  const apiBase = runtime2.config.sofrApiBase || SOFR_API_BASE;
+  const endpoint = runtime2.config.effrEndpoint || EFFR_ENDPOINT;
+  const result = httpClient.sendRequest(runtime2, fetchEFFRCallback, ConsensusAggregationByFields({
+    rate: () => identical(),
+    rateBps: () => identical(),
+    date: () => identical(),
+    targetFrom: () => identical(),
+    targetTo: () => identical(),
+    fetchedAt: () => ignore()
+  }).withDefault({
+    rate: 0,
+    rateBps: 0,
+    date: "",
+    targetFrom: 0,
+    targetTo: 0,
+    fetchedAt: 0
+  }))(apiBase, endpoint).result();
+  return {
+    rate: result.rate,
+    rateBps: result.rateBps,
+    date: result.date,
+    targetFrom: result.targetFrom,
+    targetTo: result.targetTo
+  };
+}
+function classifyRegime(defiPremiumBps) {
+  const abs = Math.abs(defiPremiumBps);
+  if (abs < 10)
+    return "CONVERGED";
+  if (abs < 50)
+    return "NORMAL";
+  if (abs < 200)
+    return "DIVERGED";
+  return "DISLOCATED";
+}
+function runSOFRComparison(runtime2) {
+  runtime2.log("=== DeBOR vs SOFR/EFFR Comparison ===");
+  runtime2.log("Step 1: Reading DeBOR oracle rates from Sepolia...");
+  const targetNetwork = getNetwork({
+    chainFamily: "evm",
+    chainSelectorName: runtime2.config.targetChainSelectorName,
+    isTestnet: true
+  });
+  if (!targetNetwork) {
+    return "COMPARE: Target network unavailable";
+  }
+  const evmClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector);
+  const oracleRates = {};
+  for (const asset of ASSETS) {
+    const oracleAddr = runtime2.config.oracleAddresses[asset];
+    if (!oracleAddr)
+      continue;
+    try {
+      const result2 = evmClient.callContract(runtime2, {
+        call: encodeCallMsg({
+          from: zeroAddress,
+          to: oracleAddr,
+          data: encodeFunctionData({
+            abi: DEBOR_ORACLE_READ_ABI,
+            functionName: "getRate"
+          })
+        }),
+        blockNumber: LAST_FINALIZED_BLOCK_NUMBER
+      }).result();
+      const rate = decodeFunctionResult({
+        abi: DEBOR_ORACLE_READ_ABI,
+        functionName: "getRate",
+        data: bytesToHex(result2.data)
+      });
+      oracleRates[asset] = Number(BigInt(rate));
+      runtime2.log(`  ${asset}: ${oracleRates[asset]}bps`);
+    } catch (e) {
+      runtime2.log(`  ${asset}: read failed: ${e}`);
+      oracleRates[asset] = 0;
+    }
+  }
+  runtime2.log("Step 2: Fetching SOFR from NY Fed API...");
+  let sofr = { rate: 0, rateBps: 0, date: "", volumeBillions: 0, percentile1: 0, percentile99: 0 };
+  try {
+    sofr = fetchSOFR(runtime2);
+    runtime2.log(`  SOFR: ${sofr.rate}% (${sofr.rateBps}bps) as of ${sofr.date}, volume=$${sofr.volumeBillions}B`);
+  } catch (e) {
+    runtime2.log(`  SOFR fetch failed: ${e}`);
+  }
+  runtime2.log("Step 3: Fetching EFFR (Fed Funds Rate) from NY Fed API...");
+  let effr = { rate: 0, rateBps: 0, date: "", targetFrom: 0, targetTo: 0 };
+  try {
+    effr = fetchEFFR(runtime2);
+    runtime2.log(`  EFFR: ${effr.rate}% (${effr.rateBps}bps), target range: ${effr.targetFrom}%-${effr.targetTo}%`);
+  } catch (e) {
+    runtime2.log(`  EFFR fetch failed: ${e}`);
+  }
+  runtime2.log("Step 4: Computing DeFi vs TradFi comparison...");
+  const comparisons = [];
+  for (const asset of ASSETS) {
+    const deborRate = oracleRates[asset] || 0;
+    if (deborRate === 0)
+      continue;
+    const defiPremium = deborRate - sofr.rateBps;
+    const regime = classifyRegime(defiPremium);
+    comparisons.push({
+      asset,
+      deborRate,
+      sofrRate: sofr.rateBps,
+      effrRate: effr.rateBps,
+      defiPremium,
+      regime
+    });
+    const sign = defiPremium >= 0 ? "+" : "";
+    runtime2.log(`  ${asset}: DeBOR=${deborRate}bps, SOFR=${sofr.rateBps}bps, premium=${sign}${defiPremium}bps → ${regime}`);
+  }
+  const stableComps = comparisons.filter((c) => STABLECOINS.includes(c.asset));
+  const avgStablePremium = stableComps.length > 0 ? Math.round(stableComps.reduce((sum, c) => sum + c.defiPremium, 0) / stableComps.length) : 0;
+  runtime2.log(`  Avg stablecoin DeFi premium: ${avgStablePremium >= 0 ? "+" : ""}${avgStablePremium}bps`);
+  const stableNames = stableComps.map((c) => `${c.asset}=${c.deborRate}`).join(", ");
+  const nonStable = comparisons.filter((c) => !STABLECOINS.includes(c.asset));
+  const nonStableNames = nonStable.map((c) => `${c.asset}=${c.deborRate}`).join(", ");
+  let summaryText = `Stablecoin DeFi rates (${stableNames}) `;
+  if (Math.abs(avgStablePremium) < 50) {
+    summaryText += `converged within ${Math.abs(avgStablePremium)}bps of SOFR (${sofr.rateBps}bps).`;
+  } else {
+    summaryText += `diverged ${avgStablePremium >= 0 ? "+" : ""}${avgStablePremium}bps from SOFR (${sofr.rateBps}bps).`;
+  }
+  if (nonStable.length > 0) {
+    summaryText += ` Non-stablecoin assets (${nonStableNames}) reflect different borrow demand dynamics.`;
+  }
+  runtime2.log(`  Summary: ${summaryText}`);
+  const result = {
+    sofr,
+    effr,
+    comparisons,
+    avgStablePremium,
+    summary: summaryText
+  };
+  runtime2.log(`=== SOFR Comparison Complete ===`);
+  runtime2.log(safeJsonStringify(result));
+  const regimeCounts = comparisons.reduce((acc, c) => {
+    acc[c.regime] = (acc[c.regime] || 0) + 1;
+    return acc;
+  }, {});
+  const regimeStr = Object.entries(regimeCounts).map(([r, n]) => `${r}:${n}`).join(", ");
+  return `COMPARE: SOFR=${sofr.rateBps}bps, EFFR=${effr.rateBps}bps, avgStablePremium=${avgStablePremium >= 0 ? "+" : ""}${avgStablePremium}bps [${regimeStr}]`;
+}
+function sofrCrossReference(runtime2, oracleRates) {
+  const warnings = [];
+  runtime2.log("Step 8: SOFR cross-reference (NY Fed API)...");
+  let sofr = { rate: 0, rateBps: 0, date: "", volumeBillions: 0, percentile1: 0, percentile99: 0 };
+  try {
+    sofr = fetchSOFR(runtime2);
+    runtime2.log(`  SOFR: ${sofr.rate}% (${sofr.rateBps}bps) as of ${sofr.date}, volume=$${sofr.volumeBillions}B`);
+  } catch (e) {
+    runtime2.log(`  SOFR fetch failed: ${e} — skipping cross-reference`);
+    return warnings;
+  }
+  if (sofr.rateBps === 0) {
+    runtime2.log(`  SOFR data unavailable — skipping cross-reference`);
+    return warnings;
+  }
+  for (const asset of STABLECOINS) {
+    const rate = Number(oracleRates[asset] || 0n);
+    if (rate === 0)
+      continue;
+    const premium = rate - sofr.rateBps;
+    const regime = classifyRegime(premium);
+    const sign = premium >= 0 ? "+" : "";
+    if (premium < 0 && Math.abs(premium) > 50) {
+      warnings.push(`SOFR:${asset}_BELOW(${premium}bps)`);
+      runtime2.log(`  WARNING: ${asset} DeBOR rate (${rate}bps) significantly below SOFR (${sofr.rateBps}bps) — unusual`);
+    } else if (Math.abs(premium) > 200) {
+      warnings.push(`SOFR:${asset}_DISLOCATED(${sign}${premium}bps)`);
+      runtime2.log(`  WARNING: ${asset} DeFi-TradFi dislocation: ${sign}${premium}bps`);
+    } else {
+      runtime2.log(`  ${asset}: DeFi premium ${sign}${premium}bps → ${regime}`);
+    }
+  }
+  return warnings;
+}
+var ASSETS2 = ["USDC", "ETH", "BTC", "DAI", "USDT"];
+var STABLECOINS2 = ["USDC", "DAI", "USDT"];
 var RATE_MIN_BPS = 1n;
 var RATE_MAX_BPS = 5000n;
 var STABLECOIN_SPREAD_THRESHOLD = 200;
@@ -18432,7 +18687,7 @@ function runHttpValidation(runtime2) {
   }
   const evmClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector);
   const oracleRates = {};
-  for (const asset of ASSETS) {
+  for (const asset of ASSETS2) {
     const oracleAddr = runtime2.config.oracleAddresses[asset];
     if (!oracleAddr)
       continue;
@@ -18463,7 +18718,7 @@ function runHttpValidation(runtime2) {
   }
   runtime2.log(`  Oracle rates (safeJsonStringify): ${safeJsonStringify(oracleRates)}`);
   runtime2.log("Step 2: Rate sanity checks...");
-  for (const asset of ASSETS) {
+  for (const asset of ASSETS2) {
     const rate = oracleRates[asset] || 0n;
     if (rate === 0n) {
       warnings.push(`${asset}:ZERO`);
@@ -18479,7 +18734,7 @@ function runHttpValidation(runtime2) {
     }
   }
   runtime2.log("Step 3: Stablecoin consistency check...");
-  const stableRates = STABLECOINS.map((a) => ({ asset: a, rate: Number(oracleRates[a] || 0n) })).filter((r) => r.rate > 0);
+  const stableRates = STABLECOINS2.map((a) => ({ asset: a, rate: Number(oracleRates[a] || 0n) })).filter((r) => r.rate > 0);
   if (stableRates.length >= 2) {
     const rates = stableRates.map((r) => r.rate);
     const maxRate = Math.max(...rates);
@@ -18515,7 +18770,7 @@ function runHttpValidation(runtime2) {
     }
   }
   runtime2.log("Step 5: Historical rate consistency...");
-  for (const asset of ASSETS) {
+  for (const asset of ASSETS2) {
     const oracleAddr = runtime2.config.oracleAddresses[asset];
     if (!oracleAddr || !oracleRates[asset])
       continue;
@@ -18635,9 +18890,507 @@ function runHttpValidation(runtime2) {
   } catch (e) {
     runtime2.log(`  sendReport: ${e} (expected — no real webhook in simulation)`);
   }
-  const summary = warnings.length > 0 ? `VALIDATION: ${warnings.length} warnings [${warnings.join(", ")}] | consensus=${consensusChecks}/5` : `VALIDATION: All OK, TVLs healthy, consensus=${consensusChecks}/5`;
+  try {
+    const sofrWarnings = sofrCrossReference(runtime2, oracleRates);
+    warnings.push(...sofrWarnings);
+  } catch (e) {
+    runtime2.log(`  Step 8 SOFR cross-reference failed: ${e}`);
+  }
+  const summary = warnings.length > 0 ? `VALIDATION: ${warnings.length} warnings [${warnings.join(", ")}] | consensus=${consensusChecks}/5` : `VALIDATION: All OK, TVLs healthy, SOFR cross-checked, consensus=${consensusChecks}/5`;
   runtime2.log(`=== ${summary} ===`);
   return summary;
+}
+var ASSETS3 = ["USDC", "ETH", "BTC", "DAI", "USDT"];
+var Z_95 = 1.645;
+var Z_99 = 2.326;
+var CVAR_95_MULT = 2.063;
+var CVAR_99_MULT = 2.665;
+var HHI_LOW = 0.15;
+var HHI_MODERATE = 0.25;
+var PROTOCOL_TVL_SLUGS = {
+  aave_v3: "aave-v3",
+  spark: "spark",
+  compound_v3: "compound-v3",
+  morpho_blue: "morpho",
+  moonwell: "moonwell",
+  benqi: "benqi-lending"
+};
+var STRESS_SCENARIOS = [
+  { name: "Parallel Up (+200bps)", shockBps: 200 },
+  { name: "Parallel Down (-200bps)", shockBps: -200 },
+  { name: "Short Rate Up (+300bps)", shockBps: 300 },
+  { name: "Short Rate Down (-300bps)", shockBps: -300 }
+];
+function readOracleBenchmark(runtime2, asset) {
+  const oracleAddress = runtime2.config.oracleAddresses[asset];
+  const network248 = getNetwork({
+    chainFamily: "evm",
+    chainSelectorName: runtime2.config.targetChainSelectorName
+  });
+  const evmClient = new cre.capabilities.EVMClient(network248.chainSelector.selector);
+  const callData = encodeFunctionData({
+    abi: DEBOR_ORACLE_READ_ABI,
+    functionName: "getFullBenchmark"
+  });
+  const result = evmClient.callContract(runtime2, {
+    call: encodeCallMsg({ from: zeroAddress, to: oracleAddress, data: callData }),
+    blockNumber: LAST_FINALIZED_BLOCK_NUMBER
+  }).result();
+  const decoded = decodeFunctionResult({
+    abi: DEBOR_ORACLE_READ_ABI,
+    functionName: "getFullBenchmark",
+    data: bytesToHex(result.data)
+  });
+  return {
+    asset,
+    rate: Number(decoded[0]),
+    supply: Number(decoded[1]),
+    spread: Number(decoded[2]),
+    vol: Number(decoded[3]),
+    term7d: Number(decoded[4]),
+    sources: Number(decoded[6]),
+    configured: Number(decoded[7])
+  };
+}
+function readHistoricalRate2(runtime2, asset, periodsBack) {
+  const oracleAddress = runtime2.config.oracleAddresses[asset];
+  const network248 = getNetwork({
+    chainFamily: "evm",
+    chainSelectorName: runtime2.config.targetChainSelectorName
+  });
+  const evmClient = new cre.capabilities.EVMClient(network248.chainSelector.selector);
+  const callData = encodeFunctionData({
+    abi: DEBOR_ORACLE_READ_ABI,
+    functionName: "getHistoricalRate",
+    args: [BigInt(periodsBack)]
+  });
+  const result = evmClient.callContract(runtime2, {
+    call: encodeCallMsg({ from: zeroAddress, to: oracleAddress, data: callData }),
+    blockNumber: LAST_FINALIZED_BLOCK_NUMBER
+  }).result();
+  const decoded = decodeFunctionResult({
+    abi: DEBOR_ORACLE_READ_ABI,
+    functionName: "getHistoricalRate",
+    data: bytesToHex(result.data)
+  });
+  return Number(decoded);
+}
+function computeParametricVaR(currentRate, previousRate, crossProtocolVol) {
+  const crossProtocolStdDev = Math.sqrt(crossProtocolVol / 1000);
+  const rateDelta = Math.abs(currentRate - previousRate);
+  const periodVol = Math.max(rateDelta || 1, crossProtocolStdDev);
+  const annualizedVol = periodVol * Math.sqrt(17520);
+  return {
+    var95: Math.round(periodVol * Z_95),
+    var99: Math.round(periodVol * Z_99),
+    cvar95: Math.round(periodVol * CVAR_95_MULT),
+    cvar99: Math.round(periodVol * CVAR_99_MULT),
+    realizedVol: Math.round(annualizedVol)
+  };
+}
+function computeHHI(protocolTVLs) {
+  const tvlValues = Array.from(protocolTVLs.values());
+  const totalTVL = tvlValues.reduce((sum, v) => sum + v, 0);
+  if (totalTVL === 0) {
+    return { hhi: 1, effectiveSources: 1, maxWeight: 1 };
+  }
+  let hhi = 0;
+  let maxWeight = 0;
+  for (const tvl of tvlValues) {
+    const share = tvl / totalTVL;
+    hhi += share * share;
+    if (share > maxWeight)
+      maxWeight = share;
+  }
+  return {
+    hhi: Math.round(hhi * 1e4) / 1e4,
+    effectiveSources: Math.round(1 / hhi * 100) / 100,
+    maxWeight: Math.round(maxWeight * 1e4) / 1e4
+  };
+}
+function runStressTests(currentRate, var99, topProtocolShare) {
+  const results = [];
+  for (const scenario of STRESS_SCENARIOS) {
+    const shockedRate = Math.max(0, currentRate + scenario.shockBps);
+    results.push({
+      scenario: scenario.name,
+      shockedRate,
+      impact: scenario.shockBps,
+      breachesVaR: Math.abs(scenario.shockBps) > var99
+    });
+  }
+  const sourceFailureImpact = Math.round(topProtocolShare * currentRate * 0.1);
+  results.push({
+    scenario: "Source Failure (top protocol removed)",
+    shockedRate: Math.max(0, currentRate - sourceFailureImpact),
+    impact: -sourceFailureImpact,
+    breachesVaR: sourceFailureImpact > var99
+  });
+  results.push({
+    scenario: "TVL Collapse (80% drop)",
+    shockedRate: currentRate,
+    impact: 0,
+    breachesVaR: false
+  });
+  return results;
+}
+function computeRiskLevel(var99, hhi, sourceUptime, sofrSpreadAbs, crossProtocolVol) {
+  let score = 0;
+  if (var99 > 200)
+    score += 30;
+  else if (var99 > 100)
+    score += 20;
+  else if (var99 > 50)
+    score += 10;
+  if (hhi > HHI_MODERATE)
+    score += 25;
+  else if (hhi > HHI_LOW)
+    score += 15;
+  if (sourceUptime < 0.5)
+    score += 20;
+  else if (sourceUptime < 0.7)
+    score += 10;
+  if (sofrSpreadAbs > 200)
+    score += 15;
+  else if (sofrSpreadAbs > 50)
+    score += 8;
+  if (crossProtocolVol > 5000)
+    score += 10;
+  else if (crossProtocolVol > 2000)
+    score += 5;
+  if (score >= 60)
+    return "CRITICAL";
+  if (score >= 40)
+    return "HIGH";
+  if (score >= 20)
+    return "MEDIUM";
+  return "LOW";
+}
+function classifyRegime2(sofrSpread) {
+  const abs = Math.abs(sofrSpread);
+  if (abs < 10)
+    return "CONVERGED";
+  if (abs < 50)
+    return "NORMAL";
+  if (abs < 200)
+    return "DIVERGED";
+  return "DISLOCATED";
+}
+function fetchSingleTVLForHHI(sendRequester, tvlApiBase, slug) {
+  const url = `${tvlApiBase}/tvl/${slug}`;
+  const response = sendRequester.sendRequest({ url, method: "GET" }).result();
+  if (!ok(response)) {
+    return { slug, tvl: 0, fetchedAt: Date.now() };
+  }
+  const tvlValue = Number(text(response));
+  if (isNaN(tvlValue) || tvlValue <= 0) {
+    return { slug, tvl: 0, fetchedAt: Date.now() };
+  }
+  return { slug, tvl: tvlValue, fetchedAt: Date.now() };
+}
+function fetchProtocolTVLs(runtime2) {
+  const tvlMap = new Map;
+  const httpClient = new cre.capabilities.HTTPClient;
+  const seen = new Set;
+  for (const p of runtime2.config.protocols) {
+    const protocolBase = p.protocol;
+    if (seen.has(protocolBase))
+      continue;
+    seen.add(protocolBase);
+    const slug = PROTOCOL_TVL_SLUGS[protocolBase];
+    if (!slug)
+      continue;
+    try {
+      const result = httpClient.sendRequest(runtime2, fetchSingleTVLForHHI, ConsensusAggregationByFields({
+        slug: () => identical(),
+        tvl: () => median(),
+        fetchedAt: () => ignore()
+      }).withDefault({ slug, tvl: 0, fetchedAt: 0 }))(runtime2.config.tvlApiBase, slug).result();
+      if (result.tvl > 0) {
+        tvlMap.set(protocolBase, result.tvl);
+        runtime2.log(`  ${protocolBase}: TVL=$${Math.floor(result.tvl).toLocaleString()}`);
+      }
+    } catch (e) {
+      runtime2.log(`  ${protocolBase}: TVL fetch failed (${e})`);
+    }
+  }
+  return tvlMap;
+}
+function runRiskAnalysis(runtime2) {
+  runtime2.log("=== DeBOR Risk & Compliance Analysis ===");
+  runtime2.log("Step 1: Reading oracle benchmarks...");
+  const benchmarks = [];
+  for (const asset of ASSETS3) {
+    try {
+      const bm = readOracleBenchmark(runtime2, asset);
+      benchmarks.push(bm);
+      runtime2.log(`  ${asset}: rate=${bm.rate}bps, spread=${bm.spread}bps, vol=${bm.vol}, sources=${bm.sources}/${bm.configured}`);
+    } catch (e) {
+      runtime2.log(`  ${asset}: FAILED (${e})`);
+    }
+  }
+  if (benchmarks.length === 0) {
+    return safeJsonStringify({ error: "No oracle data available" });
+  }
+  runtime2.log("Step 2: Reading historical rates for VaR...");
+  const previousRates = new Map;
+  for (const bm of benchmarks) {
+    try {
+      const prev = readHistoricalRate2(runtime2, bm.asset, 1);
+      previousRates.set(bm.asset, prev);
+      runtime2.log(`  ${bm.asset}: previous=${prev}bps, delta=${bm.rate - prev}bps`);
+    } catch (e) {
+      runtime2.log(`  ${bm.asset}: historical read failed (${e})`);
+      previousRates.set(bm.asset, bm.rate);
+    }
+  }
+  runtime2.log("Step 3: Fetching SOFR...");
+  let sofrRateBps = 0;
+  try {
+    const sofr = fetchSOFR(runtime2);
+    sofrRateBps = sofr.rateBps;
+    runtime2.log(`  SOFR: ${sofr.rateBps}bps (${sofr.date})`);
+  } catch (e) {
+    runtime2.log(`  SOFR fetch failed: ${e}`);
+  }
+  runtime2.log("Step 4: Computing VaR/CVaR...");
+  const primaryBm = benchmarks.find((b) => b.asset === "USDC") || benchmarks[0];
+  const prevRate = previousRates.get(primaryBm.asset) || primaryBm.rate;
+  const varResult = computeParametricVaR(primaryBm.rate, prevRate, primaryBm.vol);
+  runtime2.log(`  VaR_95: ${varResult.var95}bps`);
+  runtime2.log(`  VaR_99: ${varResult.var99}bps`);
+  runtime2.log(`  CVaR_95: ${varResult.cvar95}bps`);
+  runtime2.log(`  CVaR_99: ${varResult.cvar99}bps`);
+  runtime2.log(`  Realized Vol (annualized): ${varResult.realizedVol}bps`);
+  runtime2.log("Step 5: Computing source concentration (HHI)...");
+  const protocolTVLs = fetchProtocolTVLs(runtime2);
+  const hhiResult = computeHHI(protocolTVLs);
+  runtime2.log(`  HHI: ${hhiResult.hhi} (${hhiResult.hhi < HHI_LOW ? "LOW" : hhiResult.hhi < HHI_MODERATE ? "MODERATE" : "HIGH"} concentration)`);
+  runtime2.log(`  Effective Sources: ${hhiResult.effectiveSources}`);
+  runtime2.log(`  Max Source Weight: ${(hhiResult.maxWeight * 100).toFixed(1)}%`);
+  runtime2.log("Step 6: Running Basel IRRBB stress tests...");
+  const stressResults = runStressTests(primaryBm.rate, varResult.var99, hhiResult.maxWeight);
+  for (const sr of stressResults) {
+    runtime2.log(`  ${sr.scenario}: rate=${sr.shockedRate}bps, impact=${sr.impact}bps${sr.breachesVaR ? " [BREACHES VaR]" : ""}`);
+  }
+  const sofrSpread = primaryBm.rate - sofrRateBps;
+  const regime = classifyRegime2(sofrSpread);
+  const totalSources = benchmarks.reduce((s, b) => s + b.sources, 0);
+  const totalConfigured = benchmarks.reduce((s, b) => s + b.configured, 0);
+  const sourceUptime = totalConfigured > 0 ? totalSources / totalConfigured : 0;
+  const riskLevel = computeRiskLevel(varResult.var99, hhiResult.hhi, sourceUptime, Math.abs(sofrSpread), primaryBm.vol);
+  runtime2.log(`Step 7: Composite Risk Assessment`);
+  runtime2.log(`  SOFR Spread: ${sofrSpread}bps (${regime})`);
+  runtime2.log(`  Source Uptime: ${(sourceUptime * 100).toFixed(0)}% (${totalSources}/${totalConfigured})`);
+  runtime2.log(`  Risk Level: ${riskLevel}`);
+  const metrics = {
+    var95: varResult.var95,
+    var99: varResult.var99,
+    cvar95: varResult.cvar95,
+    cvar99: varResult.cvar99,
+    realizedVol: varResult.realizedVol,
+    crossProtocolVol: primaryBm.vol,
+    protocolHHI: hhiResult.hhi,
+    effectiveSources: hhiResult.effectiveSources,
+    maxSourceWeight: hhiResult.maxWeight,
+    stressResults,
+    sofrSpread,
+    regime,
+    sourceUptime,
+    riskLevel,
+    summary: `DeBOR Risk: ${riskLevel} | VaR99=${varResult.var99}bps | HHI=${hhiResult.hhi} (${hhiResult.effectiveSources} eff.) | SOFR+${sofrSpread}bps (${regime}) | Sources=${totalSources}/${totalConfigured}`
+  };
+  runtime2.log(`=== Risk Analysis Complete: ${metrics.summary} ===`);
+  return safeJsonStringify(metrics);
+}
+var ASSETS4 = ["USDC", "ETH", "BTC", "DAI", "USDT"];
+var DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
+var GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+var SYSTEM_PROMPT = `You are a DeFi interest rate risk analyst for the DeBOR benchmark oracle.
+DeBOR aggregates lending/borrowing rates from multiple DeFi protocols across chains into benchmark rates.
+Classify the current market conditions from the provided data.
+You MUST respond with a JSON object containing EXACTLY these 7 fields:
+{"riskLevel":"MEDIUM","riskScore":50,"anomalyDetected":false,"rateDirection":"STABLE","spreadHealth":"NORMAL","explanation":"brief reason","analyzedAt":0}
+Field constraints:
+- riskLevel: one of "LOW", "MEDIUM", "HIGH", "CRITICAL"
+- riskScore: integer 0-100
+- anomalyDetected: boolean true or false
+- rateDirection: one of "RISING", "FALLING", "STABLE"
+- spreadHealth: one of "NORMAL", "COMPRESSED", "INVERTED"
+- explanation: string under 150 characters
+- analyzedAt: always 0
+Do not include any other fields. Do not wrap in markdown.`;
+function readAllBenchmarks(runtime2) {
+  const snapshots = [];
+  for (const asset of ASSETS4) {
+    const oracleAddress = runtime2.config.oracleAddresses[asset];
+    const network248 = getNetwork({
+      chainFamily: "evm",
+      chainSelectorName: runtime2.config.targetChainSelectorName
+    });
+    const evmClient = new cre.capabilities.EVMClient(network248.chainSelector.selector);
+    try {
+      const callData = encodeFunctionData({
+        abi: DEBOR_ORACLE_READ_ABI,
+        functionName: "getFullBenchmark"
+      });
+      const result = evmClient.callContract(runtime2, {
+        call: encodeCallMsg({ from: zeroAddress, to: oracleAddress, data: callData }),
+        blockNumber: LAST_FINALIZED_BLOCK_NUMBER
+      }).result();
+      const decoded = decodeFunctionResult({
+        abi: DEBOR_ORACLE_READ_ABI,
+        functionName: "getFullBenchmark",
+        data: bytesToHex(result.data)
+      });
+      snapshots.push({
+        asset,
+        rate: Number(decoded[0]),
+        supply: Number(decoded[1]),
+        spread: Number(decoded[2]),
+        vol: Number(decoded[3]),
+        term7d: Number(decoded[4]),
+        sources: Number(decoded[6]),
+        configured: Number(decoded[7])
+      });
+    } catch (e) {
+      runtime2.log(`  ${asset}: oracle read failed (${e})`);
+    }
+  }
+  return snapshots;
+}
+function buildPrompt(snapshots, sofrRateBps) {
+  const rateLines = snapshots.map((s) => `  ${s.asset}: ${s.rate}bps`).join(`
+`);
+  const spreadLines = snapshots.map((s) => `  ${s.asset}: ${s.spread}bps`).join(`
+`);
+  const volLines = snapshots.map((s) => `  ${s.asset}: ${s.vol}`).join(`
+`);
+  const totalSources = snapshots.reduce((s, b) => s + b.sources, 0);
+  const totalConfigured = snapshots.reduce((s, b) => s + b.configured, 0);
+  const stablecoins = snapshots.filter((s) => ["USDC", "DAI", "USDT"].includes(s.asset));
+  const avgStableRate = stablecoins.length > 0 ? Math.round(stablecoins.reduce((s, b) => s + b.rate, 0) / stablecoins.length) : 0;
+  const defiPremium = avgStableRate - sofrRateBps;
+  const primary = snapshots.find((s) => s.asset === "USDC") || snapshots[0];
+  const direction = primary ? primary.rate > primary.term7d + 10 ? "RISING" : primary.rate < primary.term7d - 10 ? "FALLING" : "STABLE" : "STABLE";
+  return `Analyze DeBOR benchmark data:
+
+BENCHMARK RATES (basis points):
+${rateLines}
+
+SPREADS borrow-supply (basis points):
+${spreadLines}
+
+CROSS-PROTOCOL VOLATILITY (scaled x1000):
+${volLines}
+
+SOURCE HEALTH: ${totalSources}/${totalConfigured} sources active
+
+TRADFI COMPARISON:
+  SOFR: ${sofrRateBps}bps
+  Stablecoin DeFi premium: ${defiPremium}bps
+
+7-DAY TREND: Current=${primary?.rate || 0}bps, 7d avg=${primary?.term7d || 0}bps, direction=${direction}
+
+Classify risk level, direction, spread health, and anomaly status.`;
+}
+var LLM_DEFAULTS = {
+  riskLevel: "MEDIUM",
+  riskScore: 50,
+  anomalyDetected: false,
+  rateDirection: "STABLE",
+  spreadHealth: "NORMAL",
+  explanation: "LLM unavailable, returning defaults",
+  analyzedAt: 0
+};
+function runAIAnalysis(runtime2) {
+  runtime2.log("=== DeBOR AI Market Intelligence ===");
+  runtime2.log("Step 1: Reading oracle benchmarks...");
+  const snapshots = readAllBenchmarks(runtime2);
+  for (const s of snapshots) {
+    runtime2.log(`  ${s.asset}: rate=${s.rate}bps, spread=${s.spread}bps, vol=${s.vol}`);
+  }
+  if (snapshots.length === 0) {
+    return safeJsonStringify({ error: "No oracle data available" });
+  }
+  runtime2.log("Step 2: Fetching SOFR...");
+  let sofrRateBps = 0;
+  try {
+    const sofr = fetchSOFR(runtime2);
+    sofrRateBps = sofr.rateBps;
+    runtime2.log(`  SOFR: ${sofr.rateBps}bps`);
+  } catch (e) {
+    runtime2.log(`  SOFR fetch failed: ${e}`);
+  }
+  runtime2.log("Step 3: Building analysis prompt...");
+  const prompt = buildPrompt(snapshots, sofrRateBps);
+  runtime2.log("Step 4: Calling LLM via HTTPClient...");
+  const model = runtime2.config.groqApiModel || DEFAULT_GROQ_MODEL;
+  const apiKey = runtime2.config.groqApiKey || "";
+  let result = { ...LLM_DEFAULTS };
+  if (!apiKey) {
+    runtime2.log("  GROQ_API_KEY not configured — returning defaults");
+  } else {
+    try {
+      const requestBody = JSON.stringify({
+        model,
+        temperature: 0,
+        seed: 42,
+        max_tokens: 500,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: prompt }
+        ]
+      });
+      const httpClient = new cre.capabilities.HTTPClient;
+      const response = httpClient.sendRequest(runtime2, {
+        url: GROQ_API_URL,
+        method: "POST",
+        body: Buffer.from(requestBody).toString("base64"),
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        }
+      }).result();
+      if (ok(response)) {
+        const body = JSON.parse(text(response));
+        const content = body.choices?.[0]?.message?.content;
+        if (content) {
+          const parsed = JSON.parse(content);
+          result = {
+            riskLevel: parsed.riskLevel || parsed.risk_level || "MEDIUM",
+            riskScore: parsed.riskScore ?? parsed.risk_score ?? 50,
+            anomalyDetected: parsed.anomalyDetected ?? parsed.anomaly_detected ?? false,
+            rateDirection: parsed.rateDirection || parsed.rate_direction || "STABLE",
+            spreadHealth: parsed.spreadHealth || parsed.spread_health || "NORMAL",
+            explanation: parsed.explanation || "",
+            analyzedAt: parsed.analyzedAt ?? parsed.analyzed_at ?? 0
+          };
+        } else {
+          runtime2.log("  LLM returned no content");
+        }
+      } else {
+        runtime2.log(`  LLM call returned status ${response.statusCode}`);
+      }
+    } catch (e) {
+      runtime2.log(`  LLM call failed: ${e}`);
+    }
+  }
+  runtime2.log(`  Risk Level: ${result.riskLevel} (${result.riskScore}/100)`);
+  runtime2.log(`  Anomaly: ${result.anomalyDetected} | Direction: ${result.rateDirection} | Spreads: ${result.spreadHealth}`);
+  runtime2.log(`  Explanation: ${result.explanation}`);
+  const analysis = {
+    riskLevel: result.riskLevel,
+    riskScore: result.riskScore,
+    anomalyDetected: result.anomalyDetected,
+    rateDirection: result.rateDirection,
+    spreadHealth: result.spreadHealth,
+    explanation: result.explanation,
+    analyzedAt: result.analyzedAt
+  };
+  runtime2.log(`=== AI Analysis Complete: ${result.riskLevel} (${result.riskScore}/100) | ${result.rateDirection} | ${result.spreadHealth} ===`);
+  return safeJsonStringify(analysis);
 }
 var protocolSchema = exports_external.object({
   protocol: exports_external.string(),
@@ -18661,7 +19414,18 @@ var configSchema = exports_external.object({
     USDT: exports_external.string()
   }),
   gasLimit: exports_external.string(),
-  swapAddress: exports_external.string().optional()
+  swapAddress: exports_external.string().optional(),
+  sofrApiBase: exports_external.string().optional(),
+  sofrEndpoint: exports_external.string().optional(),
+  effrEndpoint: exports_external.string().optional(),
+  groqApiModel: exports_external.string().optional(),
+  groqApiKey: exports_external.string().optional(),
+  riskThresholds: exports_external.object({
+    varWarning: exports_external.number(),
+    varCritical: exports_external.number(),
+    hhiWarning: exports_external.number(),
+    spreadWarning: exports_external.number()
+  }).optional()
 });
 function parseTriggerTimestamp(payload) {
   const execTime = payload.scheduledExecutionTime;
@@ -18911,6 +19675,15 @@ var onHttpTrigger = (runtime2, payload) => {
     const request = JSON.parse(inputStr);
     if (request.action === "validate") {
       return runHttpValidation(runtime2);
+    }
+    if (request.action === "compare") {
+      return runSOFRComparison(runtime2);
+    }
+    if (request.action === "risk") {
+      return runRiskAnalysis(runtime2);
+    }
+    if (request.action === "analyze") {
+      return runAIAnalysis(runtime2);
     }
     if (request.asset && ["USDC", "ETH", "BTC", "DAI", "USDT", "ALL"].includes(request.asset)) {
       asset = request.asset;

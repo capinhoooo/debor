@@ -27,6 +27,8 @@ import { runPreflightCheck } from './preflightCheck'
 import { fetchConfidentialTVL } from './confidentialFetcher'
 import { runHttpValidation } from './httpValidator'
 import { runSOFRComparison } from './sofrComparator'
+import { runRiskAnalysis } from './riskAnalyst'
+import { runAIAnalysis } from './aiAnalyst'
 import type { Config, AssetClass } from './types'
 
 const protocolSchema = z.object({
@@ -56,6 +58,14 @@ const configSchema = z.object({
   sofrApiBase: z.string().optional(),
   sofrEndpoint: z.string().optional(),
   effrEndpoint: z.string().optional(),
+  groqApiModel: z.string().optional(),
+  groqApiKey: z.string().optional(),
+  riskThresholds: z.object({
+    varWarning: z.number(),
+    varCritical: z.number(),
+    hhiWarning: z.number(),
+    spreadWarning: z.number(),
+  }).optional(),
 })
 
 function parseTriggerTimestamp(payload: CronPayload): bigint {
@@ -402,6 +412,16 @@ const onHttpTrigger = (runtime: Runtime<Config>, payload: any): string => {
     // Action dispatch: compare runs DeBOR vs SOFR/EFFR TradFi comparison
     if (request.action === 'compare') {
       return runSOFRComparison(runtime)
+    }
+
+    // Action dispatch: risk runs quantitative risk metrics (VaR, CVaR, HHI, stress tests)
+    if (request.action === 'risk') {
+      return runRiskAnalysis(runtime)
+    }
+
+    // Action dispatch: analyze runs AI-powered market intelligence via Groq LLM
+    if (request.action === 'analyze') {
+      return runAIAnalysis(runtime)
     }
 
     if (request.asset && ['USDC', 'ETH', 'BTC', 'DAI', 'USDT', 'ALL'].includes(request.asset)) {
