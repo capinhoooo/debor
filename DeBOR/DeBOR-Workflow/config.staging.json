@@ -405,5 +405,13 @@
   "swapAddress": "0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291",
   "sofrApiBase": "https://markets.newyorkfed.org/api",
   "sofrEndpoint": "/rates/secured/sofr/last/1.json",
-  "effrEndpoint": "/rates/unsecured/effr/last/1.json"
+  "effrEndpoint": "/rates/unsecured/effr/last/1.json",
+  "groqApiModel": "llama-3.3-70b-versatile",
+  "groqApiKey": "YOUR_GROQ_API_KEY",
+  "riskThresholds": {
+    "varWarning": 50,
+    "varCritical": 200,
+    "hhiWarning": 0.25,
+    "spreadWarning": 300
+  }
 }
