@@ -228,9 +228,18 @@ contract DeBOROracleTest is Test {
     }
 
     function test_ZeroRateReport() public {
+        // With circuit breaker, rate=0 conflicts with REPORT_TYPE_NORMAL=0,
+        // so zero-rate reports must use the new format with explicit type prefix
         bytes memory report = abi.encode(
-            uint256(0), uint256(0), uint256(0),
-            uint256(0), uint256(0), uint256(999), uint256(0), uint256(0)
+            uint256(0),      // REPORT_TYPE_NORMAL
+            uint256(0),      // rate
+            uint256(0),      // supply
+            uint256(0),      // spread
+            uint256(0),      // vol
+            uint256(0),      // term7d
+            uint256(999),    // timestamp
+            uint256(0),      // numSources
+            uint256(0)       // sourcesConfigured
         );
         bytes memory metadata = new bytes(96);
 
@@ -274,6 +283,116 @@ contract DeBOROracleTest is Test {
         // rate = 800 + 200 + 300 = 1300
         assertEq(rateBps, 1300);
         assertEq(keccak256(bytes(regime)), keccak256(bytes("CRISIS")));
+    }
+
+    // --- Circuit Breaker Tests ---
+
+    function test_CircuitBreakerAlertReport() public {
+        bytes memory metadata = new bytes(96);
+
+        // First write a normal rate so there's existing data
+        bytes memory normalReport = abi.encode(
+            uint256(400), uint256(200), uint256(100),
+            uint256(300), uint256(350), uint256(1000), uint256(7), uint256(10)
+        );
+        vm.prank(forwarder);
+        oracle.onReport(metadata, normalReport);
+        assertEq(oracle.deborRate(), 400);
+        assertFalse(oracle.circuitBreakerActive());
+
+        // Now send an alert report (type 1)
+        // Format: (uint8 reportType=1, uint256 proposedRate, uint256 riskLevel, uint256 deviationBps, uint256 timestamp)
+        bytes memory alertReport = abi.encode(
+            uint256(1),      // REPORT_TYPE_ALERT
+            uint256(900),    // proposedRate (anomalous)
+            uint256(3),      // CRITICAL risk level
+            uint256(500),    // 500bps deviation
+            uint256(2000)    // timestamp
+        );
+
+        vm.expectEmit(true, false, false, true);
+        emit DeBOROracle.CircuitBreakerTripped(2000, 900, 400, 3, 500);
+
+        vm.prank(forwarder);
+        oracle.onReport(metadata, alertReport);
+
+        assertTrue(oracle.circuitBreakerActive());
+        assertEq(oracle.riskLevel(), 3);
+        assertEq(oracle.lastCircuitBreakerTrip(), 2000);
+        // Rate should NOT have changed
+        assertEq(oracle.deborRate(), 400);
+    }
+
+    function test_CircuitBreakerResetOnNormalReport() public {
+        bytes memory metadata = new bytes(96);
+
+        // Set initial rate
+        bytes memory report1 = abi.encode(
+            uint256(400), uint256(200), uint256(100),
+            uint256(300), uint256(350), uint256(1000), uint256(7), uint256(10)
+        );
+        vm.prank(forwarder);
+        oracle.onReport(metadata, report1);
+
+        // Trip circuit breaker
+        bytes memory alertReport = abi.encode(
+            uint256(1), uint256(900), uint256(3), uint256(500), uint256(2000)
+        );
+        vm.prank(forwarder);
+        oracle.onReport(metadata, alertReport);
+        assertTrue(oracle.circuitBreakerActive());
+
+        // Normal report should reset circuit breaker (legacy format, rate > 1)
+        bytes memory normalReport = abi.encode(
+            uint256(420), uint256(210), uint256(110),
+            uint256(280), uint256(360), uint256(3000), uint256(8), uint256(10)
+        );
+
+        vm.expectEmit(true, false, false, false);
+        emit DeBOROracle.CircuitBreakerReset(3000);
+
+        vm.prank(forwarder);
+        oracle.onReport(metadata, normalReport);
+
+        assertFalse(oracle.circuitBreakerActive());
+        assertEq(oracle.deborRate(), 420);
+    }
+
+    function test_LegacyReportBackwardsCompat() public {
+        bytes memory metadata = new bytes(96);
+
+        // Legacy format: 8 uint256s, first value > 1 (the rate)
+        bytes memory legacyReport = abi.encode(
+            uint256(500), uint256(300), uint256(200),
+            uint256(400), uint256(480), uint256(5000), uint256(6), uint256(9)
+        );
+
+        vm.prank(forwarder);
+        oracle.onReport(metadata, legacyReport);
+
+        assertEq(oracle.deborRate(), 500);
+        assertEq(oracle.deborSupply(), 300);
+        assertEq(oracle.numSources(), 6);
+        assertEq(oracle.sourcesConfigured(), 9);
+    }
+
+    function test_NewFormatNormalReport() public {
+        bytes memory metadata = new bytes(96);
+
+        // New format: type=0 prefix + 8 fields
+        bytes memory newReport = abi.encode(
+            uint256(0),      // REPORT_TYPE_NORMAL
+            uint256(450), uint256(250), uint256(150),
+            uint256(350), uint256(400), uint256(6000), uint256(9), uint256(12)
+        );
+
+        vm.prank(forwarder);
+        oracle.onReport(metadata, newReport);
+
+        assertEq(oracle.deborRate(), 450);
+        assertEq(oracle.deborSupply(), 250);
+        assertEq(oracle.numSources(), 9);
+        assertEq(oracle.sourcesConfigured(), 12);
     }
 
     function test_ConsumerCollateralRatioLowSpread() public {

@@ -19,6 +19,11 @@ contract DeBORCCIPReceiver is CCIPReceiver, Ownable {
     uint256 public lastUpdated;
     uint256 public numSources;
 
+    // Risk metadata (propagated from L1 oracle)
+    uint8 public riskLevel;          // 0=LOW, 1=MEDIUM, 2=HIGH, 3=CRITICAL
+    bool public circuitBreakerActive;
+    uint256 public riskScore;        // 0-100
+
     uint256 public constant MAX_HISTORY = 336;
     uint256[336] public rateHistory;
     uint256 public historyIndex;
@@ -29,6 +34,7 @@ contract DeBORCCIPReceiver is CCIPReceiver, Ownable {
         uint256 deborRate,
         uint256 numSources
     );
+    event RiskMetadataReceived(uint8 riskLevel, bool circuitBreakerActive, uint256 riskScore);
 
     error UnauthorizedSourceChain(uint64 received, uint64 expected);
     error UnauthorizedSender(address received, address expected);
@@ -52,29 +58,57 @@ contract DeBORCCIPReceiver is CCIPReceiver, Ownable {
             revert UnauthorizedSender(sender, allowedSender);
         }
 
-        (
-            uint256 _rate,
-            uint256 _supply,
-            uint256 _spread,
-            uint256 _vol,
-            uint256 _term7d,
-            uint256 _timestamp,
-            uint256 _numSources
-        ) = abi.decode(message.data, (uint256, uint256, uint256, uint256, uint256, uint256, uint256));
+        // Detect format: 7 fields (224 bytes) = legacy, 10 fields (320 bytes) = risk-aware
+        if (message.data.length >= 320) {
+            (
+                uint256 _rate,
+                uint256 _supply,
+                uint256 _spread,
+                uint256 _vol,
+                uint256 _term7d,
+                uint256 _timestamp,
+                uint256 _numSources,
+                uint256 _riskLevel,
+                uint256 _cbActive,
+                uint256 _riskScore
+            ) = abi.decode(message.data, (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256));
 
-        // Store metrics
-        deborRate = _rate;
-        deborSupply = _supply;
-        deborSpread = _spread;
-        deborVol = _vol;
-        deborTerm7d = _term7d;
-        lastUpdated = _timestamp;
-        numSources = _numSources;
+            deborRate = _rate;
+            deborSupply = _supply;
+            deborSpread = _spread;
+            deborVol = _vol;
+            deborTerm7d = _term7d;
+            lastUpdated = _timestamp;
+            numSources = _numSources;
+            riskLevel = uint8(_riskLevel);
+            circuitBreakerActive = _cbActive != 0;
+            riskScore = _riskScore;
 
-        rateHistory[historyIndex % MAX_HISTORY] = _rate;
+            emit RiskMetadataReceived(uint8(_riskLevel), _cbActive != 0, _riskScore);
+        } else {
+            (
+                uint256 _rate,
+                uint256 _supply,
+                uint256 _spread,
+                uint256 _vol,
+                uint256 _term7d,
+                uint256 _timestamp,
+                uint256 _numSources
+            ) = abi.decode(message.data, (uint256, uint256, uint256, uint256, uint256, uint256, uint256));
+
+            deborRate = _rate;
+            deborSupply = _supply;
+            deborSpread = _spread;
+            deborVol = _vol;
+            deborTerm7d = _term7d;
+            lastUpdated = _timestamp;
+            numSources = _numSources;
+        }
+
+        rateHistory[historyIndex % MAX_HISTORY] = deborRate;
         historyIndex++;
 
-        emit BenchmarkReceived(message.messageId, message.sourceChainSelector, _rate, _numSources);
+        emit BenchmarkReceived(message.messageId, message.sourceChainSelector, deborRate, numSources);
     }
 
     function setAllowedSource(uint64 _chainSelector, address _sender) external onlyOwner {
@@ -116,6 +150,18 @@ contract DeBORCCIPReceiver is CCIPReceiver, Ownable {
         )
     {
         return (deborRate, deborSupply, deborSpread, deborVol, deborTerm7d, lastUpdated, numSources);
+    }
+
+    function getRiskMetadata()
+        external
+        view
+        returns (
+            uint8 _riskLevel,
+            bool _circuitBreakerActive,
+            uint256 _riskScore
+        )
+    {
+        return (riskLevel, circuitBreakerActive, riskScore);
     }
 
     function getHistoricalRate(uint256 periodsBack) external view returns (uint256) {

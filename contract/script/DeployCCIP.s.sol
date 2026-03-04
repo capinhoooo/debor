@@ -10,12 +10,14 @@ import {DeBORCCIPReceiver} from "../src/DeBORCCIPReceiver.sol";
 contract DeploySender is Script {
     // Sepolia CCIP Router
     address constant SEPOLIA_ROUTER = 0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59;
+    // CRE Forwarder address on Sepolia
+    address constant CRE_FORWARDER = 0x15fC6ae953E024d975e77382eEeC56A9101f9F88;
 
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(pk);
 
-        DeBORCCIPSender sender = new DeBORCCIPSender(SEPOLIA_ROUTER);
+        DeBORCCIPSender sender = new DeBORCCIPSender(SEPOLIA_ROUTER, CRE_FORWARDER);
         console.log("DeBORCCIPSender deployed:", address(sender));
 
         vm.stopBroadcast();

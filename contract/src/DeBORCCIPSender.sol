@@ -3,11 +3,13 @@ pragma solidity ^0.8.24;
 
 import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReceiverTemplate} from "./ReceiverTemplate.sol";
 
 /// @title DeBORCCIPSender - Relays DeBOR benchmark data cross-chain via CCIP
-/// @notice Deployed on Sepolia. Called after each oracle update to propagate rates to L2s.
-contract DeBORCCIPSender is Ownable {
+/// @notice Deployed on Sepolia. CRE workflow writes reports directly via writeReport,
+///         which triggers automatic CCIP relay to all configured L2 destinations.
+/// @dev Extends ReceiverTemplate (which inherits Ownable) so CRE can call onReport -> _processReport
+contract DeBORCCIPSender is ReceiverTemplate {
     IRouterClient public immutable router;
 
     struct Destination {
@@ -31,9 +33,15 @@ contract DeBORCCIPSender is Ownable {
     error InsufficientFee(uint256 required, uint256 provided);
     error NoActiveDestinations();
 
-    constructor(address _router) Ownable(msg.sender) {
+    constructor(address _router, address _forwarderAddress) ReceiverTemplate(_forwarderAddress) {
         router = IRouterClient(_router);
         gasLimitPerMessage = 300_000;
+    }
+
+    /// @notice CRE writes benchmark report here; auto-relays to all active L2 destinations
+    /// @dev Uses contract's ETH balance for CCIP fees. Fund via receive().
+    function _processReport(bytes calldata report) internal override {
+        _relayToAll(report);
     }
 
     receive() external payable {}
@@ -56,7 +64,12 @@ contract DeBORCCIPSender is Ownable {
         gasLimitPerMessage = _gasLimit;
     }
 
+    /// @notice Manual relay (external callers with ETH). Still works for backwards compat.
     function relayBenchmark(bytes calldata benchmarkData) external payable {
+        _relayToAll(benchmarkData);
+    }
+
+    function _relayToAll(bytes calldata data) internal {
         uint256 totalFees = 0;
         uint256 activeCount = 0;
 
@@ -66,21 +79,21 @@ contract DeBORCCIPSender is Ownable {
 
             Client.EVM2AnyMessage memory message = _buildMessage(
                 destinations[i].receiver,
-                benchmarkData
+                data
             );
 
             totalFees += router.getFee(destinations[i].chainSelector, message);
         }
 
         if (activeCount == 0) revert NoActiveDestinations();
-        if (msg.value < totalFees) revert InsufficientFee(totalFees, msg.value);
+        if (address(this).balance < totalFees) revert InsufficientFee(totalFees, address(this).balance);
 
         for (uint256 i = 0; i < destinations.length; i++) {
             if (!destinations[i].active) continue;
 
             Client.EVM2AnyMessage memory message = _buildMessage(
                 destinations[i].receiver,
-                benchmarkData
+                data
             );
 
             uint256 fee = router.getFee(destinations[i].chainSelector, message);

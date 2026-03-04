@@ -49,7 +49,7 @@ contract DeBORCCIPTest is Test {
         mockRouter = new MockRouter(MOCK_FEE);
 
         // Deploy sender (on "Sepolia")
-        sender = new DeBORCCIPSender(address(mockRouter));
+        sender = new DeBORCCIPSender(address(mockRouter), address(0xF0));
 
         // Deploy receiver (on "Base Sepolia")
         receiver = new DeBORCCIPReceiver(
@@ -299,6 +299,122 @@ contract DeBORCCIPTest is Test {
         // Fee should reflect 3 destinations
         uint256 totalFee = sender.getTotalFee(benchmarkData);
         assertEq(totalFee, MOCK_FEE * 3);
+    }
+
+    // --- Risk Metadata Tests ---
+
+    function test_receiverRiskAwareMessage() public {
+        // New 10-field format with risk metadata
+        bytes memory riskData = abi.encode(
+            uint256(400),       // rate
+            uint256(250),       // supply
+            uint256(120),       // spread
+            uint256(3000),      // vol
+            uint256(380),       // term7d
+            uint256(1710000000),// timestamp
+            uint256(8),         // numSources
+            uint256(2),         // riskLevel = HIGH
+            uint256(1),         // circuitBreakerActive = true
+            uint256(72)         // riskScore
+        );
+
+        Client.Any2EVMMessage memory message = Client.Any2EVMMessage({
+            messageId: keccak256("risk-test"),
+            sourceChainSelector: SEPOLIA_SELECTOR,
+            sender: abi.encode(address(sender)),
+            data: riskData,
+            destTokenAmounts: new Client.EVMTokenAmount[](0)
+        });
+
+        vm.prank(address(mockRouter));
+        receiver.ccipReceive(message);
+
+        // Benchmark fields
+        assertEq(receiver.deborRate(), 400);
+        assertEq(receiver.deborSupply(), 250);
+        assertEq(receiver.numSources(), 8);
+
+        // Risk metadata
+        assertEq(receiver.riskLevel(), 2);
+        assertTrue(receiver.circuitBreakerActive());
+        assertEq(receiver.riskScore(), 72);
+    }
+
+    function test_receiverGetRiskMetadata() public {
+        bytes memory riskData = abi.encode(
+            uint256(400), uint256(250), uint256(120), uint256(3000),
+            uint256(380), uint256(1710000000), uint256(8),
+            uint256(3), uint256(1), uint256(95)
+        );
+
+        Client.Any2EVMMessage memory message = Client.Any2EVMMessage({
+            messageId: keccak256("risk-getter"),
+            sourceChainSelector: SEPOLIA_SELECTOR,
+            sender: abi.encode(address(sender)),
+            data: riskData,
+            destTokenAmounts: new Client.EVMTokenAmount[](0)
+        });
+
+        vm.prank(address(mockRouter));
+        receiver.ccipReceive(message);
+
+        (uint8 rl, bool cbActive, uint256 rs) = receiver.getRiskMetadata();
+        assertEq(rl, 3);
+        assertTrue(cbActive);
+        assertEq(rs, 95);
+    }
+
+    function test_receiverLegacyFormatStillWorks() public {
+        // Legacy 7-field format should still work
+        _deliverMessage();
+
+        assertEq(receiver.deborRate(), 367);
+        // Risk fields should be default (0/false)
+        assertEq(receiver.riskLevel(), 0);
+        assertFalse(receiver.circuitBreakerActive());
+        assertEq(receiver.riskScore(), 0);
+    }
+
+    function test_receiverRiskResetOnNormalMessage() public {
+        // First send risk-aware message with circuit breaker active
+        bytes memory riskData = abi.encode(
+            uint256(400), uint256(250), uint256(120), uint256(3000),
+            uint256(380), uint256(1710000000), uint256(8),
+            uint256(3), uint256(1), uint256(90)
+        );
+
+        Client.Any2EVMMessage memory msg1 = Client.Any2EVMMessage({
+            messageId: keccak256("risk-1"),
+            sourceChainSelector: SEPOLIA_SELECTOR,
+            sender: abi.encode(address(sender)),
+            data: riskData,
+            destTokenAmounts: new Client.EVMTokenAmount[](0)
+        });
+
+        vm.prank(address(mockRouter));
+        receiver.ccipReceive(msg1);
+        assertTrue(receiver.circuitBreakerActive());
+
+        // Then send risk-aware message with circuit breaker inactive
+        bytes memory normalData = abi.encode(
+            uint256(420), uint256(260), uint256(110), uint256(500),
+            uint256(400), uint256(1710001000), uint256(9),
+            uint256(0), uint256(0), uint256(15)
+        );
+
+        Client.Any2EVMMessage memory msg2 = Client.Any2EVMMessage({
+            messageId: keccak256("risk-2"),
+            sourceChainSelector: SEPOLIA_SELECTOR,
+            sender: abi.encode(address(sender)),
+            data: normalData,
+            destTokenAmounts: new Client.EVMTokenAmount[](0)
+        });
+
+        vm.prank(address(mockRouter));
+        receiver.ccipReceive(msg2);
+        assertFalse(receiver.circuitBreakerActive());
+        assertEq(receiver.riskLevel(), 0);
+        assertEq(receiver.riskScore(), 15);
     }
 
     // --- Helpers ---

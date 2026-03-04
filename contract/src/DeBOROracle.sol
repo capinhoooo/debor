@@ -3,10 +3,16 @@ pragma solidity ^0.8.24;
 
 import {ReceiverTemplate} from "./ReceiverTemplate.sol";
 
-/// @title DeBOROracle - DeFi Benchmark Rate Oracle
-/// @notice Receives TVL-weighted benchmark rates from CRE workflow and stores them on-chain
-/// @dev Any smart contract can read DeBOR metrics via the public getter functions
+/// @title DeBOROracle - DeFi Benchmark Rate Oracle with Circuit Breaker
+/// @notice Receives TVL-weighted benchmark rates from CRE workflow and stores them on-chain.
+///         Supports dual report types: normal (type 0) updates the rate, alert (type 1)
+///         activates the circuit breaker without updating the rate.
+/// @dev Any smart contract can read DeBOR metrics and circuit breaker state via public getters
 contract DeBOROracle is ReceiverTemplate {
+    // --- Report Types ---
+    uint8 public constant REPORT_TYPE_NORMAL = 0;
+    uint8 public constant REPORT_TYPE_ALERT = 1;
+
     // --- DeBOR Metrics ---
     uint256 public deborRate;           // TVL-weighted borrow rate (bps)
     uint256 public deborSupply;         // TVL-weighted supply rate (bps)
@@ -17,6 +23,12 @@ contract DeBOROracle is ReceiverTemplate {
     uint256 public numSources;          // Number of data sources that contributed
     uint256 public sourcesConfigured;   // Number of data sources configured
 
+    // --- Circuit Breaker State ---
+    bool public circuitBreakerActive;
+    uint256 public lastCircuitBreakerTrip;
+    uint8 public riskLevel;             // 0=LOW, 1=MEDIUM, 2=HIGH, 3=CRITICAL
+
+    // --- Rate History ---
     uint256 public constant MAX_HISTORY = 336;
     uint256[336] public rateHistory;
     uint256 public historyIndex;
@@ -33,9 +45,75 @@ contract DeBOROracle is ReceiverTemplate {
         uint256 sourcesConfigured
     );
 
+    event CircuitBreakerTripped(
+        uint256 indexed timestamp,
+        uint256 proposedRate,
+        uint256 currentRate,
+        uint8 riskLevel,
+        uint256 deviationBps
+    );
+
+    event CircuitBreakerReset(uint256 indexed timestamp);
+
     constructor(address _forwarderAddress) ReceiverTemplate(_forwarderAddress) {}
 
     function _processReport(bytes calldata report) internal override {
+        // First uint256 doubles as reportType (0 or 1) or the rate itself (>1).
+        // For backwards compatibility: if the first value is > 1, treat as legacy normal report.
+        uint8 reportType;
+        uint256 firstWord = abi.decode(report[:32], (uint256));
+
+        if (firstWord <= 1) {
+            reportType = uint8(firstWord);
+        } else {
+            reportType = REPORT_TYPE_NORMAL;
+            _processNormalReportLegacy(report);
+            return;
+        }
+
+        if (reportType == REPORT_TYPE_ALERT) {
+            _processAlertReport(report);
+        } else {
+            _processNormalReport(report);
+        }
+    }
+
+    function _processNormalReport(bytes calldata report) internal {
+        (
+            , // skip reportType (already read)
+            uint256 _rate,
+            uint256 _supply,
+            uint256 _spread,
+            uint256 _vol,
+            uint256 _term7d,
+            uint256 _timestamp,
+            uint256 _numSources,
+            uint256 _sourcesConfigured
+        ) = abi.decode(report, (uint8, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256));
+
+        deborRate = _rate;
+        deborSupply = _supply;
+        deborSpread = _spread;
+        deborVol = _vol;
+        deborTerm7d = _term7d;
+        lastUpdated = _timestamp;
+        numSources = _numSources;
+        sourcesConfigured = _sourcesConfigured;
+
+        rateHistory[historyIndex % MAX_HISTORY] = _rate;
+        historyIndex++;
+
+        // Reset circuit breaker on successful normal report
+        if (circuitBreakerActive) {
+            circuitBreakerActive = false;
+            emit CircuitBreakerReset(_timestamp);
+        }
+
+        emit BenchmarkUpdated(_timestamp, _rate, _supply, _spread, _vol, _term7d, _numSources, _sourcesConfigured);
+    }
+
+    /// @dev Legacy format: 8 uint256s without reportType prefix (backwards compatible)
+    function _processNormalReportLegacy(bytes calldata report) internal {
         (
             uint256 _rate,
             uint256 _supply,
@@ -59,7 +137,28 @@ contract DeBOROracle is ReceiverTemplate {
         rateHistory[historyIndex % MAX_HISTORY] = _rate;
         historyIndex++;
 
+        if (circuitBreakerActive) {
+            circuitBreakerActive = false;
+            emit CircuitBreakerReset(_timestamp);
+        }
+
         emit BenchmarkUpdated(_timestamp, _rate, _supply, _spread, _vol, _term7d, _numSources, _sourcesConfigured);
+    }
+
+    function _processAlertReport(bytes calldata report) internal {
+        (
+            , // skip reportType
+            uint256 _proposedRate,
+            uint256 _riskLevel,
+            uint256 _deviationBps,
+            uint256 _timestamp
+        ) = abi.decode(report, (uint8, uint256, uint256, uint256, uint256));
+
+        circuitBreakerActive = true;
+        lastCircuitBreakerTrip = _timestamp;
+        riskLevel = uint8(_riskLevel);
+
+        emit CircuitBreakerTripped(_timestamp, _proposedRate, deborRate, uint8(_riskLevel), _deviationBps);
     }
 
     function getRate() external view returns (uint256) {
