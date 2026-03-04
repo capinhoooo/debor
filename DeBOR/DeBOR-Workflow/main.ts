@@ -30,6 +30,7 @@ import { runSOFRComparison } from './sofrComparator'
 import { runRiskAnalysis } from './riskAnalyst'
 import { runAIAnalysis } from './aiAnalyst'
 import type { Config, AssetClass } from './types'
+import { REPORT_TYPE_NORMAL, REPORT_TYPE_ALERT, RISK_LEVEL_LOW, RISK_LEVEL_MEDIUM, RISK_LEVEL_HIGH, RISK_LEVEL_CRITICAL } from './types'
 
 const protocolSchema = z.object({
   protocol: z.string(),
@@ -189,8 +190,105 @@ function runAssetBenchmark(runtime: Runtime<Config>, payload: CronPayload, asset
     }
   }
 
-  runtime.log(`Step 4: Generating signed report...`)
+  // ─── Inline Risk Gate (Circuit Breaker) ───
+  // If rate guard computed a large deviation AND config has thresholds, evaluate risk level.
+  // CRITICAL risk -> write alert report (type 1) instead of normal, halting the oracle.
   const triggerTimestamp = parseTriggerTimestamp(payload)
+  const thresholds = runtime.config.riskThresholds
+  let isCircuitBreaker = false
+  let riskLevelNum = RISK_LEVEL_LOW
+
+  if (thresholds && targetNetwork) {
+    try {
+      const guardClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector)
+      const currentRateResult2 = guardClient
+        .callContract(runtime, {
+          call: encodeCallMsg({
+            from: zeroAddress,
+            to: oracleAddress as Address,
+            data: encodeFunctionData({
+              abi: DEBOR_ORACLE_READ_ABI,
+              functionName: 'getRate',
+            }),
+          }),
+          blockNumber: LATEST_BLOCK_NUMBER,
+        })
+        .result()
+
+      const currentRateForRisk = BigInt(
+        decodeFunctionResult({
+          abi: DEBOR_ORACLE_READ_ABI,
+          functionName: 'getRate',
+          data: bytesToHex(currentRateResult2.data),
+        }) as any,
+      )
+
+      if (currentRateForRisk > 0n) {
+        const deviation = Number(
+          metrics.deborRate > currentRateForRisk
+            ? metrics.deborRate - currentRateForRisk
+            : currentRateForRisk - metrics.deborRate,
+        )
+
+        if (deviation >= thresholds.varCritical) {
+          riskLevelNum = RISK_LEVEL_CRITICAL
+          isCircuitBreaker = true
+          runtime.log(`  CIRCUIT BREAKER: ${asset} deviation=${deviation}bps >= critical threshold ${thresholds.varCritical}bps`)
+        } else if (deviation >= thresholds.varWarning) {
+          riskLevelNum = RISK_LEVEL_HIGH
+          runtime.log(`  RISK WARNING: ${asset} deviation=${deviation}bps >= warning threshold ${thresholds.varWarning}bps`)
+        }
+      }
+    } catch (e) {
+      runtime.log(`  Risk gate: skipped (${e})`)
+    }
+  }
+
+  // If circuit breaker tripped, write ALERT report (type 1) and halt
+  if (isCircuitBreaker) {
+    runtime.log(`Step 4: Generating ALERT report (circuit breaker)...`)
+    const alertData = encodeAbiParameters(
+      parseAbiParameters('uint8, uint256, uint256, uint256, uint256'),
+      [
+        REPORT_TYPE_ALERT,
+        metrics.deborRate,    // proposedRate
+        riskLevelNum,         // riskLevel enum
+        BigInt(Number(metrics.deborRate > 0n ? metrics.deborRate : 0n)),  // deviationBps (approx)
+        triggerTimestamp,
+      ],
+    )
+
+    const alertReport = runtime.report(prepareReportRequest(alertData)).result()
+
+    runtime.log(`Step 5: Writing ALERT to ${asset} oracle on Sepolia...`)
+    const writeNetwork = getNetwork({
+      chainFamily: 'evm',
+      chainSelectorName: runtime.config.targetChainSelectorName,
+      isTestnet: true,
+    })
+    if (!writeNetwork) throw new Error('Target network not found')
+
+    const alertEvmClient = new cre.capabilities.EVMClient(writeNetwork.chainSelector.selector)
+    const alertResult = alertEvmClient
+      .writeReport(runtime, {
+        receiver: oracleAddress,
+        report: alertReport,
+        gasConfig: { gasLimit: runtime.config.gasLimit },
+      })
+      .result()
+
+    if (alertResult.txStatus !== TxStatus.SUCCESS) {
+      runtime.log(`  Alert write failed: ${alertResult.errorMessage || alertResult.txStatus}`)
+      return `${asset}: ALERT WRITE FAILED`
+    }
+
+    const alertTxHash = alertResult.txHash || new Uint8Array(32)
+    runtime.log(`  Alert TX: ${bytesToHex(alertTxHash)}`)
+    runtime.log(`=== ${asset} CIRCUIT BREAKER ACTIVATED (risk=${riskLevelNum}) ===`)
+    return `${asset}: CIRCUIT_BREAKER (risk=${riskLevelNum}, rate=${metrics.deborRate}bps)`
+  }
+
+  runtime.log(`Step 4: Generating signed report...`)
   const reportData = encodeAbiParameters(
     parseAbiParameters('uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256'),
     [
@@ -392,6 +490,50 @@ const onUsdcExtTrigger = (runtime: Runtime<Config>, payload: CronPayload): strin
   return `USDC_EXT: MERGED OK (${totalSources}/${allUsdcProtocols.length} sources, ${mergedRate}bps)`
 }
 
+/// x402 Payment Gate: Verify caller has pre-purchased credits for premium actions
+/// Returns true if payment gate is not configured (free access) or caller has credits.
+const verifyPaymentGate = (runtime: Runtime<Config>, payer: string | undefined): boolean => {
+  const gateAddr = runtime.config.paymentGateAddress
+  if (!gateAddr || !payer) return true // No gate configured or no payer = free access
+
+  try {
+    const targetNetwork = getNetwork({
+      chainFamily: 'evm',
+      chainSelectorName: runtime.config.targetChainSelectorName,
+      isTestnet: true,
+    })
+    if (!targetNetwork) return true
+
+    const gateClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector)
+    const creditCalldata = encodeFunctionData({
+      abi: [{ inputs: [{ name: 'consumer', type: 'address' }], name: 'getCredits', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' }],
+      functionName: 'getCredits',
+      args: [payer as Address],
+    })
+
+    const creditResult = gateClient
+      .callContract(runtime, {
+        toAddress: gateAddr,
+        data: bytesToHex(Buffer.from(creditCalldata.slice(2), 'hex')),
+        blockNumber: LATEST_BLOCK_NUMBER,
+      })
+      .result()
+
+    const creditBalance = decodeFunctionResult({
+      abi: [{ inputs: [{ name: 'consumer', type: 'address' }], name: 'getCredits', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' }],
+      functionName: 'getCredits',
+      data: `0x${creditResult.data}` as `0x${string}`,
+    })
+
+    const minCredits = BigInt(runtime.config.paymentMinCredits || '1')
+    runtime.log(`  x402 gate: ${payer} has ${creditBalance} credits (min: ${minCredits})`)
+    return (creditBalance as bigint) >= minCredits
+  } catch (e) {
+    runtime.log(`  x402 gate check error: ${e}`)
+    return true // Fail open for hackathon demo
+  }
+}
+
 /// HTTP Trigger Handler: On-demand benchmark refresh
 /// Any authorized caller can request an immediate benchmark update via HTTP API.
 /// Input JSON: { "asset": "USDC" | "ETH" | "BTC" | "ALL" }
@@ -415,13 +557,126 @@ const onHttpTrigger = (runtime: Runtime<Config>, payload: any): string => {
     }
 
     // Action dispatch: risk runs quantitative risk metrics (VaR, CVaR, HHI, stress tests)
+    // Premium action: requires x402 payment credits (if gate is configured)
     if (request.action === 'risk') {
+      if (!verifyPaymentGate(runtime, request.payer)) {
+        return JSON.stringify({ error: 'PAYMENT_REQUIRED', message: 'Insufficient credits. Purchase credits via DeBORPaymentGate contract.', action: 'risk' })
+      }
       return runRiskAnalysis(runtime)
     }
 
     // Action dispatch: analyze runs AI-powered market intelligence via Groq LLM
+    // Premium action: requires x402 payment credits (if gate is configured)
+    // Closed feedback loop: AI classifies risk -> triggers circuit breaker -> on-chain state changes
     if (request.action === 'analyze') {
-      return runAIAnalysis(runtime)
+      if (!verifyPaymentGate(runtime, request.payer)) {
+        return JSON.stringify({ error: 'PAYMENT_REQUIRED', message: 'Insufficient credits. Purchase credits via DeBORPaymentGate contract.', action: 'analyze' })
+      }
+      const aiResultJson = runAIAnalysis(runtime)
+      const aiResult = JSON.parse(aiResultJson) as {
+        riskLevel: string; riskScore: number; anomalyDetected: boolean
+        rateDirection: string; spreadHealth: string; explanation: string
+      }
+
+      // ─── AI Feedback Loop: Write AI verdict to DeBORAIInsight contract ───
+      const aiInsightAddr = runtime.config.aiInsightAddress
+      if (aiInsightAddr) {
+        try {
+          const RISK_LEVEL_MAP: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 }
+          const DIRECTION_MAP: Record<string, number> = { STABLE: 0, RISING: 1, FALLING: 2 }
+          const SPREAD_MAP: Record<string, number> = { NORMAL: 0, COMPRESSED: 1, INVERTED: 2 }
+          const REGIME_MAP: Record<string, number> = { CONVERGED: 0, NORMAL: 1, DIVERGED: 2, DISLOCATED: 3 }
+
+          // Determine regime from risk level (simplified mapping)
+          const regimeFromRisk = aiResult.riskLevel === 'CRITICAL' ? 3
+            : aiResult.riskLevel === 'HIGH' ? 2
+            : aiResult.riskLevel === 'MEDIUM' ? 1 : 0
+
+          const insightData = encodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint256, uint256, uint256, uint256, uint256'),
+            [
+              BigInt(RISK_LEVEL_MAP[aiResult.riskLevel] ?? 1),
+              BigInt(DIRECTION_MAP[aiResult.rateDirection] ?? 0),
+              BigInt(SPREAD_MAP[aiResult.spreadHealth] ?? 0),
+              BigInt(regimeFromRisk),
+              BigInt(aiResult.riskScore),
+              BigInt(aiResult.anomalyDetected ? 1 : 0),
+              BigInt(Math.floor(Date.now() / 1000)),
+            ],
+          )
+
+          const insightReport = runtime.report(prepareReportRequest(insightData)).result()
+          const writeNet = getNetwork({
+            chainFamily: 'evm',
+            chainSelectorName: runtime.config.targetChainSelectorName,
+            isTestnet: true,
+          })
+          if (writeNet) {
+            const insightClient = new cre.capabilities.EVMClient(writeNet.chainSelector.selector)
+            const writeRes = insightClient
+              .writeReport(runtime, {
+                receiver: aiInsightAddr,
+                report: insightReport,
+                gasConfig: { gasLimit: runtime.config.gasLimit },
+              })
+              .result()
+
+            if (writeRes.txStatus === TxStatus.SUCCESS) {
+              runtime.log(`  AI verdict written to DeBORAIInsight: ${bytesToHex(writeRes.txHash || new Uint8Array(32))}`)
+            } else {
+              runtime.log(`  AI insight write failed: ${writeRes.errorMessage || writeRes.txStatus}`)
+            }
+          }
+        } catch (e) {
+          runtime.log(`  AI insight write error: ${e}`)
+        }
+      }
+
+      // ─── AI-Driven Circuit Breaker: If CRITICAL + anomaly, trip all oracles ───
+      if (aiResult.anomalyDetected && aiResult.riskLevel === 'CRITICAL') {
+        runtime.log('  AI CIRCUIT BREAKER: anomaly detected + CRITICAL risk, activating circuit breakers')
+        const triggerTs = BigInt(Math.floor(Date.now() / 1000))
+        const writeNet = getNetwork({
+          chainFamily: 'evm',
+          chainSelectorName: runtime.config.targetChainSelectorName,
+          isTestnet: true,
+        })
+
+        if (writeNet) {
+          const cbClient = new cre.capabilities.EVMClient(writeNet.chainSelector.selector)
+          for (const cbAsset of ['USDC', 'ETH', 'BTC', 'DAI', 'USDT'] as AssetClass[]) {
+            const cbOracleAddr = runtime.config.oracleAddresses[cbAsset]
+            if (!cbOracleAddr) continue
+
+            try {
+              const alertData = encodeAbiParameters(
+                parseAbiParameters('uint8, uint256, uint256, uint256, uint256'),
+                [
+                  REPORT_TYPE_ALERT,
+                  BigInt(aiResult.riskScore),  // proposedRate (reuse as signal)
+                  BigInt(RISK_LEVEL_CRITICAL),
+                  BigInt(aiResult.riskScore),  // deviationBps placeholder
+                  triggerTs,
+                ],
+              )
+              const alertReport = runtime.report(prepareReportRequest(alertData)).result()
+              const alertRes = cbClient
+                .writeReport(runtime, {
+                  receiver: cbOracleAddr,
+                  report: alertReport,
+                  gasConfig: { gasLimit: runtime.config.gasLimit },
+                })
+                .result()
+
+              runtime.log(`  ${cbAsset} circuit breaker: ${alertRes.txStatus === TxStatus.SUCCESS ? 'ACTIVATED' : 'FAILED'}`)
+            } catch (e) {
+              runtime.log(`  ${cbAsset} circuit breaker error: ${e}`)
+            }
+          }
+        }
+      }
+
+      return aiResultJson
     }
 
     if (request.asset && ['USDC', 'ETH', 'BTC', 'DAI', 'USDT', 'ALL'].includes(request.asset)) {

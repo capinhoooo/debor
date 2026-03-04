@@ -53,6 +53,13 @@ export interface PriceContext {
   timestamp: bigint
 }
 
+export interface RiskThresholds {
+  varWarning: number
+  varCritical: number
+  hhiWarning: number
+  spreadWarning: number
+}
+
 export interface Config {
   schedule: string
   protocols: ProtocolRateConfig[]
@@ -61,7 +68,26 @@ export interface Config {
   oracleAddresses: OracleAddresses
   gasLimit: string
   swapAddress?: string
+  sofrApiBase?: string
+  sofrEndpoint?: string
+  effrEndpoint?: string
+  groqApiModel?: string
+  groqApiKey?: string
+  riskThresholds?: RiskThresholds
+  ccipSenderAddress?: string
+  aiInsightAddress?: string
+  paymentGateAddress?: string
+  paymentMinCredits?: string // minimum credits required (in USDC wei)
 }
+
+// --- Circuit Breaker Report Constants ---
+export const REPORT_TYPE_NORMAL = 0
+export const REPORT_TYPE_ALERT = 1
+
+export const RISK_LEVEL_LOW = 0
+export const RISK_LEVEL_MEDIUM = 1
+export const RISK_LEVEL_HIGH = 2
+export const RISK_LEVEL_CRITICAL = 3
 
 export interface SOFRData {
   rate: number 
