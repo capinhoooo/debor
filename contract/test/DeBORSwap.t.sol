@@ -9,6 +9,7 @@ contract MockOracle {
     uint256 public rate;
     uint256 public supplyRate;
     uint256 public updatedAt;
+    bool public circuitBreakerActive;
 
     constructor(uint256 _rate) {
         rate = _rate;
@@ -20,6 +21,10 @@ contract MockOracle {
         rate = _rate;
         supplyRate = _rate * 60 / 100;
         updatedAt = block.timestamp;
+    }
+
+    function setCircuitBreaker(bool _active) external {
+        circuitBreakerActive = _active;
     }
 
     function getRate() external view returns (uint256) {
@@ -34,6 +39,10 @@ contract MockOracle {
         uint256, uint256, uint256, uint256, uint256, uint256, uint256
     ) {
         return (rate, supplyRate, rate - supplyRate, 1000000, rate, updatedAt, 7);
+    }
+
+    function getHistoricalRate(uint256) external view returns (uint256) {
+        return rate;
     }
 }
 
@@ -658,6 +667,59 @@ contract DeBORSwapTest is Test {
 
         (,,,,,,,, DeBORSwap.SwapStatus status,) = swap.getSwap(swapId);
         assertEq(uint256(status), uint256(DeBORSwap.SwapStatus.Settled));
+    }
+
+    // --- Circuit Breaker Tests ---
+
+    function test_settleCircuitBreakerActive() public {
+        uint256 swapId = _createAndJoinSwap();
+        vm.warp(block.timestamp + 1 days);
+        oracle.setRate(400);
+
+        // Trip circuit breaker
+        oracle.setCircuitBreaker(true);
+
+        vm.expectRevert(DeBORSwap.CircuitBreakerActive.selector);
+        swap.settle(swapId);
+
+        // Reset and settle normally
+        oracle.setCircuitBreaker(false);
+        swap.settle(swapId);
+        (,,,,,,,,, uint256 settlements) = swap.getSwap(swapId);
+        assertEq(settlements, 1);
+    }
+
+    // --- Exposure Limit Tests ---
+
+    function test_maxNotionalLimit() public {
+        // Set max notional to 15 ETH (swap is 10 ETH notional)
+        swap.setMaxNotional(15 ether);
+
+        // First swap works
+        vm.prank(alice);
+        swap.createSwap{value: MARGIN}(FIXED_RATE, 30 days);
+
+        // Second swap for alice exceeds 15 ETH (would be 20 ETH total)
+        vm.prank(alice);
+        vm.expectRevert();
+        swap.createSwap{value: MARGIN}(FIXED_RATE, 30 days);
+    }
+
+    function test_notionalReleasedOnCancel() public {
+        swap.setMaxNotional(15 ether);
+
+        vm.prank(alice);
+        uint256 swapId = swap.createSwap{value: MARGIN}(FIXED_RATE, 30 days);
+        assertEq(swap.activeNotional(alice), 10 ether);
+
+        vm.prank(alice);
+        swap.cancelSwap(swapId);
+        assertEq(swap.activeNotional(alice), 0);
+
+        // Can create again after cancel
+        vm.prank(alice);
+        swap.createSwap{value: MARGIN}(FIXED_RATE, 30 days);
+        assertEq(swap.activeNotional(alice), 10 ether);
     }
 
     // --- Helpers ---

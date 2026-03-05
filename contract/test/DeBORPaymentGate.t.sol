@@ -149,6 +149,26 @@ contract DeBORPaymentGateTest is Test {
         gate.setPrice(999);
     }
 
+    // --- Fail-Closed Tests ---
+
+    function test_requireAndConsumeCreditSuccess() public {
+        vm.prank(buyer);
+        gate.purchaseCredits(3);
+
+        bool ok = gate.requireAndConsumeCredit(buyer);
+        assertTrue(ok);
+        assertEq(gate.credits(buyer), 2);
+        assertEq(gate.totalCreditsConsumed(), 1);
+    }
+
+    function test_requireAndConsumeCreditReverts() public {
+        // No credits, should revert (fail-closed)
+        vm.expectRevert(
+            abi.encodeWithSelector(DeBORPaymentGate.InsufficientCredits.selector, buyer, 0, 1)
+        );
+        gate.requireAndConsumeCredit(buyer);
+    }
+
     function test_MultipleBuyers() public {
         address buyer2 = address(0xFACE);
         usdc.mint(buyer2, 50_000_000);

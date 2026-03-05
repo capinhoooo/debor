@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
 import {DeBOROracle} from "../src/DeBOROracle.sol";
+import {ReceiverTemplate} from "../src/ReceiverTemplate.sol";
 import {AdaptiveLending} from "../src/DeBORConsumer.sol";
 
 contract DeBOROracleTest is Test {
@@ -393,6 +394,90 @@ contract DeBOROracleTest is Test {
         assertEq(oracle.deborSupply(), 250);
         assertEq(oracle.numSources(), 9);
         assertEq(oracle.sourcesConfigured(), 12);
+    }
+
+    // --- TWAP Tests ---
+
+    function test_getTWAP() public {
+        bytes memory metadata = new bytes(96);
+
+        // Submit 5 reports: 400, 420, 440, 460, 480
+        for (uint256 i = 0; i < 5; i++) {
+            bytes memory report = abi.encode(
+                uint256(400 + i * 20), uint256(200), uint256(100),
+                uint256(300), uint256(350), uint256(1000 + i), uint256(7), uint256(10)
+            );
+            vm.prank(forwarder);
+            oracle.onReport(metadata, report);
+        }
+
+        // TWAP of last 5 = (400+420+440+460+480)/5 = 440
+        assertEq(oracle.getTWAP(5), 440);
+        // TWAP of last 3 = (440+460+480)/3 = 460
+        assertEq(oracle.getTWAP(3), 460);
+        // TWAP of last 1 = 480
+        assertEq(oracle.getTWAP(1), 480);
+    }
+
+    function test_getTWAPInvalidWindow() public {
+        // No reports yet, window=1 should revert
+        vm.expectRevert(abi.encodeWithSelector(DeBOROracle.InvalidTWAPWindow.selector, 1));
+        oracle.getTWAP(1);
+
+        // window=0 should also revert
+        vm.expectRevert(abi.encodeWithSelector(DeBOROracle.InvalidTWAPWindow.selector, 0));
+        oracle.getTWAP(0);
+    }
+
+    // --- Rate Bounds Tests ---
+
+    function test_rateOutOfBounds() public {
+        bytes memory metadata = new bytes(96);
+
+        // Rate > MAX_RATE_BPS (50000) should revert
+        bytes memory report = abi.encode(
+            uint256(60000), uint256(200), uint256(100),
+            uint256(300), uint256(350), uint256(1000), uint256(7), uint256(10)
+        );
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(DeBOROracle.RateOutOfBounds.selector, 60000, 50000));
+        oracle.onReport(metadata, report);
+    }
+
+    function test_rateDeviationTooLarge() public {
+        bytes memory metadata = new bytes(96);
+
+        // First write at 400
+        bytes memory report1 = abi.encode(
+            uint256(400), uint256(200), uint256(100),
+            uint256(300), uint256(350), uint256(1000), uint256(7), uint256(10)
+        );
+        vm.prank(forwarder);
+        oracle.onReport(metadata, report1);
+
+        // Second write at 3000 (deviation 2600 > 2000) should revert
+        bytes memory report2 = abi.encode(
+            uint256(3000), uint256(200), uint256(100),
+            uint256(300), uint256(350), uint256(2000), uint256(7), uint256(10)
+        );
+        vm.prank(forwarder);
+        vm.expectRevert(abi.encodeWithSelector(DeBOROracle.RateDeviationTooLarge.selector, 3000, 400, 2000));
+        oracle.onReport(metadata, report2);
+    }
+
+    // --- Admin Event Tests ---
+
+    function test_adminEventsEmitted() public {
+        address newAuthor = address(0xABC);
+        bytes32 newWorkflowId = bytes32(uint256(42));
+
+        vm.expectEmit(true, true, false, false);
+        emit ReceiverTemplate.ExpectedAuthorUpdated(address(0), newAuthor);
+        oracle.setExpectedAuthor(newAuthor);
+
+        vm.expectEmit(true, true, false, false);
+        emit ReceiverTemplate.ExpectedWorkflowIdUpdated(bytes32(0), newWorkflowId);
+        oracle.setExpectedWorkflowId(newWorkflowId);
     }
 
     function test_ConsumerCollateralRatioLowSpread() public {
