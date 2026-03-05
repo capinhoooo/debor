@@ -46,6 +46,19 @@ contract MockOracle {
     }
 }
 
+/// @dev Mock AI insight that returns controllable risk level
+contract MockAIInsight {
+    bool public highRisk;
+
+    function setHighRisk(bool _highRisk) external {
+        highRisk = _highRisk;
+    }
+
+    function isHighRisk() external view returns (bool) {
+        return highRisk;
+    }
+}
+
 contract DeBORSwapTest is Test {
     DeBORSwap swap;
     MockOracle oracle;
@@ -723,6 +736,35 @@ contract DeBORSwapTest is Test {
     }
 
     // --- Helpers ---
+
+    // --- AI Risk Guard Tests ---
+
+    function test_createSwapBlockedByAIHighRisk() public {
+        MockAIInsight ai = new MockAIInsight();
+        swap.setAIInsight(address(ai));
+        ai.setHighRisk(true);
+
+        vm.prank(alice);
+        vm.expectRevert(DeBORSwap.AIHighRiskActive.selector);
+        swap.createSwap{value: MARGIN}(FIXED_RATE, 30 days);
+    }
+
+    function test_createSwapAllowedWhenAILowRisk() public {
+        MockAIInsight ai = new MockAIInsight();
+        swap.setAIInsight(address(ai));
+        ai.setHighRisk(false);
+
+        vm.prank(alice);
+        uint256 swapId = swap.createSwap{value: MARGIN}(FIXED_RATE, 30 days);
+        assertEq(swapId, 0);
+    }
+
+    function test_createSwapAllowedWithNoAIInsight() public {
+        // Default: aiInsight is address(0), should not block
+        vm.prank(alice);
+        uint256 swapId = swap.createSwap{value: MARGIN}(FIXED_RATE, 30 days);
+        assertEq(swapId, 0);
+    }
 
     function _createSwap() internal returns (uint256) {
         vm.prank(alice);

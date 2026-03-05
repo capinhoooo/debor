@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test, console, Vm} from "forge-std/Test.sol";
 import {DeBOROracle} from "../src/DeBOROracle.sol";
 import {ReceiverTemplate} from "../src/ReceiverTemplate.sol";
 import {AdaptiveLending} from "../src/DeBORConsumer.sol";
@@ -492,5 +492,44 @@ contract DeBOROracleTest is Test {
 
         uint256 ratio = consumer.getAdaptiveCollateralRatio();
         assertEq(ratio, 15000);
+    }
+
+    // --- Rate Manipulation Detection Tests ---
+
+    function test_RateManipulationDetectedEvent() public {
+        // First: submit a base rate
+        bytes memory report1 = abi.encode(uint256(500), uint256(300), uint256(200), uint256(100), uint256(500), block.timestamp, uint256(4), uint256(4));
+        bytes memory metadata = new bytes(96);
+        vm.prank(forwarder);
+        oracle.onReport(metadata, report1);
+
+        // Second: submit a rate with >500bps deviation (triggers warning)
+        bytes memory report2 = abi.encode(uint256(1100), uint256(600), uint256(500), uint256(200), uint256(1100), block.timestamp, uint256(4), uint256(4));
+        vm.expectEmit(true, false, false, true);
+        emit DeBOROracle.RateManipulationDetected(block.timestamp, 1100, 500, 600);
+        vm.prank(forwarder);
+        oracle.onReport(metadata, report2);
+    }
+
+    function test_NoManipulationEventBelowThreshold() public {
+        // First: submit a base rate
+        bytes memory report1 = abi.encode(uint256(500), uint256(300), uint256(200), uint256(100), uint256(500), block.timestamp, uint256(4), uint256(4));
+        bytes memory metadata = new bytes(96);
+        vm.prank(forwarder);
+        oracle.onReport(metadata, report1);
+
+        // Second: submit a rate with <500bps deviation (no warning)
+        bytes memory report2 = abi.encode(uint256(900), uint256(500), uint256(400), uint256(150), uint256(900), block.timestamp, uint256(4), uint256(4));
+        // Should NOT emit RateManipulationDetected (400bps < 500bps threshold)
+        vm.recordLogs();
+        vm.prank(forwarder);
+        oracle.onReport(metadata, report2);
+
+        // Check no RateManipulationDetected event was emitted
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes32 manipulationSig = keccak256("RateManipulationDetected(uint256,uint256,uint256,uint256)");
+        for (uint256 i = 0; i < entries.length; i++) {
+            assertTrue(entries[i].topics[0] != manipulationSig, "Should not emit manipulation event");
+        }
     }
 }
