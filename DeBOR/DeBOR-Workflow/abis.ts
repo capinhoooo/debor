@@ -220,6 +220,16 @@ export const CHAINLINK_PRICE_FEED_ABI = [
   },
 ] as const
 
+export const DEBOR_AI_INSIGHT_ABI = [
+  {
+    inputs: [],
+    name: 'isHighRisk',
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const
+
 export const DEBOR_ORACLE_ABI = [
   {
     inputs: [

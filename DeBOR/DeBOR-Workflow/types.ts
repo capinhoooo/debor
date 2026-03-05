@@ -78,6 +78,9 @@ export interface Config {
   aiInsightAddress?: string
   paymentGateAddress?: string
   paymentMinCredits?: string // minimum credits required (in USDC wei)
+  rateSpikeThreshold?: string // bps threshold for rate spike detection (default: 100)
+  anomalyThreshold?: string   // bps threshold for anomaly detection (default: 200)
+  maxSwapsPerBatch?: string   // max swaps per batch operation (default: 10)
 }
 
 // --- Circuit Breaker Report Constants ---
