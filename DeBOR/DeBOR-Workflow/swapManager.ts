@@ -14,13 +14,22 @@ import {
   type CronPayload,
 } from '@chainlink/cre-sdk'
 import { encodeFunctionData, decodeFunctionResult, encodeAbiParameters, parseAbiParameters, decodeAbiParameters, zeroAddress, type Address } from 'viem'
-import { DEBOR_SWAP_ABI, DEBOR_ORACLE_READ_ABI } from './abis'
+import { DEBOR_SWAP_ABI, DEBOR_ORACLE_READ_ABI, DEBOR_AI_INSIGHT_ABI } from './abis'
 import type { Config } from './types'
 
 export const BENCHMARK_UPDATED_EVENT_SIG = '0x39b30b48c37c75c1a92ab0663ddea47330411f58b47a764238930f6f9bb0df16'
 
-const MAX_SWAPS_PER_BATCH = 10n
-const RATE_SPIKE_THRESHOLD = 100n 
+function getMaxSwapsPerBatch(runtime: Runtime<Config>): bigint {
+  return runtime.config.maxSwapsPerBatch ? BigInt(runtime.config.maxSwapsPerBatch) : 10n
+}
+
+function getRateSpikeThreshold(runtime: Runtime<Config>): bigint {
+  return runtime.config.rateSpikeThreshold ? BigInt(runtime.config.rateSpikeThreshold) : 100n
+}
+
+function getAnomalyThreshold(runtime: Runtime<Config>): bigint {
+  return runtime.config.anomalyThreshold ? BigInt(runtime.config.anomalyThreshold) : 200n
+}
 
 function getSepoliaEvmClient(runtime: Runtime<Config>) {
   const network = getNetwork({
@@ -42,7 +51,7 @@ function readSwapView(
   const callData = encodeFunctionData({
     abi: DEBOR_SWAP_ABI,
     functionName,
-    args: [MAX_SWAPS_PER_BATCH],
+    args: [getMaxSwapsPerBatch(runtime)],
   })
 
   try {
@@ -125,6 +134,38 @@ function readHistoricalRate(runtime: Runtime<Config>, periodsBack: bigint): bigi
     }) as bigint
   } catch {
     return 0n 
+  }
+}
+
+function readAIHighRisk(runtime: Runtime<Config>): boolean {
+  const aiAddr = runtime.config.aiInsightAddress
+  if (!aiAddr) return false
+
+  const evmClient = getSepoliaEvmClient(runtime)
+  const callData = encodeFunctionData({
+    abi: DEBOR_AI_INSIGHT_ABI,
+    functionName: 'isHighRisk',
+  })
+
+  try {
+    const result = evmClient
+      .callContract(runtime, {
+        call: encodeCallMsg({ from: zeroAddress, to: aiAddr as Address, data: callData }),
+        blockNumber: LAST_FINALIZED_BLOCK_NUMBER,
+      })
+      .result()
+
+    const hex = bytesToHex(result.data)
+    if (hex === '0x' || result.data.length === 0) return false
+
+    return decodeFunctionResult({
+      abi: DEBOR_AI_INSIGHT_ABI,
+      functionName: 'isHighRisk',
+      data: hex,
+    }) as boolean
+  } catch (e) {
+    runtime.log(`  Warning: isHighRisk call failed: ${e}`)
+    return false
   }
 }
 
@@ -382,8 +423,9 @@ export const onRateSpikeCheck = (runtime: Runtime<Config>, payload: CronPayload)
   const trend = analyzeRateTrend(runtime)
   runtime.log(`  Rate trend: ${trend.direction}, velocity=${trend.velocity}bps/period, accel=${trend.acceleration}bps/period²`)
 
-  if (diff <= RATE_SPIKE_THRESHOLD) {
-    const summary = `STABLE: ${diff}bps move, trend=${trend.direction}, vel=${trend.velocity}, accel=${trend.acceleration} (threshold: ${RATE_SPIKE_THRESHOLD}bps)`
+  const spikeThreshold = getRateSpikeThreshold(runtime)
+  if (diff <= spikeThreshold) {
+    const summary = `STABLE: ${diff}bps move, trend=${trend.direction}, vel=${trend.velocity}, accel=${trend.acceleration} (threshold: ${spikeThreshold}bps)`
     runtime.log(`=== Rate Spike Detector: ${summary} ===`)
     return summary
   }
@@ -468,20 +510,20 @@ export const onBenchmarkUpdated = (runtime: Runtime<Config>, log: any): string =
   }
   runtime.log(`  Previous rate: ${previousRate} bps`)
 
-  // Step 3: Check for anomaly (>200bps sudden move = potential manipulation)
-  const ANOMALY_THRESHOLD = 200n
+  // Step 3: Check for anomaly (sudden move = potential manipulation)
+  const anomalyThreshold = getAnomalyThreshold(runtime)
   const diff = newRate > previousRate
     ? newRate - previousRate
     : previousRate - newRate
   runtime.log(`  Rate change: ${diff} bps`)
 
-  if (diff <= ANOMALY_THRESHOLD) {
+  if (diff <= anomalyThreshold) {
     const summary = `NORMAL: ${newRate}bps (${diff}bps change)`
     runtime.log(`=== Anomaly Detector: ${summary} ===`)
     return summary
   }
 
-  runtime.log(`  ANOMALY DETECTED: ${diff}bps change exceeds ${ANOMALY_THRESHOLD}bps threshold!`)
+  runtime.log(`  ANOMALY DETECTED: ${diff}bps change exceeds ${anomalyThreshold}bps threshold!`)
 
   // Step 4: Emergency settle all active swaps to protect margins
   const settleableIds = readSwapView(runtime, 'getSettleableSwaps')
@@ -530,7 +572,7 @@ export const onSwapLifecycle = (runtime: Runtime<Config>, payload: CronPayload):
     runtime.log(`  Rate: ${currentRate}bps, 1h ago: ${historicalRate}bps, move: ${diff}bps`)
     runtime.log(`  Trend: ${trend.direction}, vel=${trend.velocity}bps/period, accel=${trend.acceleration}bps/period²`)
 
-    if (diff > RATE_SPIKE_THRESHOLD) {
+    if (diff > getRateSpikeThreshold(runtime)) {
       spikeDetected = true
       runtime.log(`  SPIKE DETECTED: ${diff}bps move!`)
       results.push(`SPIKE:${diff}bps`)
@@ -560,15 +602,23 @@ export const onSwapLifecycle = (runtime: Runtime<Config>, payload: CronPayload):
   }
 
   // ── Phase 3: Settlement + Closure ──
-  // Settle mature swaps and close expired ones
+  // AI risk gate: skip settlement if AI verdict is HIGH or CRITICAL
   runtime.log('Phase 3: Settlement + closure...')
+  const aiHighRisk = readAIHighRisk(runtime)
+  if (aiHighRisk) {
+    runtime.log('  AI HOLD: risk level HIGH or CRITICAL, skipping settlement')
+    results.push('ai_hold:true')
+  }
+
   const settleableIds = readSwapView(runtime, 'getSettleableSwaps')
   runtime.log(`  Settleable: ${settleableIds.length}`)
 
-  if (settleableIds.length > 0) {
+  if (settleableIds.length > 0 && !aiHighRisk) {
     runtime.log(`  Batch settling ${settleableIds.length} swaps...`)
     const tx = writeSwapAction(runtime, 1, settleableIds)
     runtime.log(`  ${tx}`)
+  } else if (settleableIds.length > 0 && aiHighRisk) {
+    runtime.log(`  Skipped ${settleableIds.length} settlements due to AI risk hold`)
   }
 
   const expiredIds = readSwapView(runtime, 'getExpiredSwaps')  // 1 read
