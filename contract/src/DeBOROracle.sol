@@ -31,6 +31,7 @@ contract DeBOROracle is ReceiverTemplate {
     // --- Rate Bounds ---
     uint256 public constant MAX_RATE_BPS = 50000;        // 500% APR ceiling
     uint256 public constant MAX_DEVIATION_BPS = 2000;     // max 20% change per update
+    uint256 public constant MANIPULATION_WARNING_BPS = 500; // 5% warning threshold
 
     error RateOutOfBounds(uint256 rate, uint256 maxRate);
     error RateDeviationTooLarge(uint256 newRate, uint256 oldRate, uint256 maxDeviation);
@@ -62,6 +63,13 @@ contract DeBOROracle is ReceiverTemplate {
     );
 
     event CircuitBreakerReset(uint256 indexed timestamp);
+
+    event RateManipulationDetected(
+        uint256 indexed timestamp,
+        uint256 proposedRate,
+        uint256 currentRate,
+        uint256 deviationBps
+    );
 
     constructor(address _forwarderAddress) ReceiverTemplate(_forwarderAddress) {}
 
@@ -104,6 +112,9 @@ contract DeBOROracle is ReceiverTemplate {
         if (deborRate > 0) {
             uint256 diff = _rate > deborRate ? _rate - deborRate : deborRate - _rate;
             if (diff > MAX_DEVIATION_BPS) revert RateDeviationTooLarge(_rate, deborRate, MAX_DEVIATION_BPS);
+            if (diff > MANIPULATION_WARNING_BPS) {
+                emit RateManipulationDetected(_timestamp, _rate, deborRate, diff);
+            }
         }
 
         deborRate = _rate;
@@ -145,6 +156,9 @@ contract DeBOROracle is ReceiverTemplate {
         if (deborRate > 0) {
             uint256 diff = _rate > deborRate ? _rate - deborRate : deborRate - _rate;
             if (diff > MAX_DEVIATION_BPS) revert RateDeviationTooLarge(_rate, deborRate, MAX_DEVIATION_BPS);
+            if (diff > MANIPULATION_WARNING_BPS) {
+                emit RateManipulationDetected(_timestamp, _rate, deborRate, diff);
+            }
         }
 
         deborRate = _rate;

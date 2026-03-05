@@ -6,6 +6,10 @@ import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 
+interface IDeBORAIInsight {
+    function isHighRisk() external view returns (bool);
+}
+
 interface IDeBOROracle {
     function getRate() external view returns (uint256);
     function getSupplyRate() external view returns (uint256);
@@ -33,6 +37,7 @@ interface IDeBOROracle {
 contract DeBORSwap is ReceiverTemplate, ERC721 {
     using Strings for uint256;
     IDeBOROracle public oracle;
+    IDeBORAIInsight public aiInsight;
 
     uint8 public constant ACTION_SETTLE = 1;
     uint8 public constant ACTION_CLOSE = 2;
@@ -86,6 +91,7 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
     error OracleStale(uint256 lastUpdated);
     error CircuitBreakerActive();
     error ExceedsMaxNotional(address party, uint256 current, uint256 additional, uint256 max);
+    error AIHighRiskActive();
 
     constructor(address _oracle, address _forwarder)
         ReceiverTemplate(_forwarder)
@@ -111,6 +117,7 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
     }
 
     function createSwap(uint256 fixedRateBps, uint256 duration) external payable returns (uint256 swapId) {
+        if (address(aiInsight) != address(0) && aiInsight.isHighRisk()) revert AIHighRiskActive();
         if (duration < MIN_DURATION || duration > MAX_DURATION) revert InvalidDuration(duration);
         if (fixedRateBps == 0 || fixedRateBps > 5000) revert InvalidFixedRate(fixedRateBps);
 
@@ -328,6 +335,10 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
 
     function setMaxNotional(uint256 _max) external onlyOwner {
         maxNotionalPerAddress = _max;
+    }
+
+    function setAIInsight(address _aiInsight) external onlyOwner {
+        aiInsight = IDeBORAIInsight(_aiInsight);
     }
 
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
