@@ -142,16 +142,22 @@ function runAssetBenchmark(runtime: Runtime<Config>, payload: CronPayload, asset
     return `${asset}: COMPUTED (${metrics.numSources} sources, ${metrics.deborRate}bps)`
   }
 
-  // ─── Dry-Run Rate Guard ───
-  // Read current on-chain rate at LATEST block (freshest data) and validate
-  // the new computed rate is within a reasonable deviation threshold.
-  // Prevents rate manipulation or stale-data writes from corrupting the oracle.
-  runtime.log('Step 3b: Dry-run rate guard (reading current on-chain rate)...')
+  // ─── Dry-Run Rate Guard + Risk Gate (single EVM call) ───
+  // Read current on-chain rate, validate deviation, and evaluate circuit breaker thresholds.
+  // Combined into one EVM call to save budget (was 2 calls, now 1).
+  runtime.log('Step 3b: Rate guard + risk gate (reading current on-chain rate)...')
   const targetNetwork = getNetwork({
     chainFamily: 'evm',
     chainSelectorName: runtime.config.targetChainSelectorName,
     isTestnet: true,
   })
+
+  const triggerTimestamp = parseTriggerTimestamp(payload)
+  const thresholds = runtime.config.riskThresholds
+  let isCircuitBreaker = false
+  let riskLevelNum = RISK_LEVEL_LOW
+  let currentOnChainRate = 0n
+
   if (targetNetwork) {
     try {
       const guardClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector)
@@ -169,7 +175,7 @@ function runAssetBenchmark(runtime: Runtime<Config>, payload: CronPayload, asset
         })
         .result()
 
-      const currentRate = BigInt(
+      currentOnChainRate = BigInt(
         decodeFunctionResult({
           abi: DEBOR_ORACLE_READ_ABI,
           functionName: 'getRate',
@@ -177,73 +183,37 @@ function runAssetBenchmark(runtime: Runtime<Config>, payload: CronPayload, asset
         }) as any,
       )
 
-      if (currentRate > 0n) {
-        const { deviationBps, safe } = computeRateDeviation(metrics.deborRate, currentRate)
+      if (currentOnChainRate > 0n) {
+        const { deviationBps, safe } = computeRateDeviation(metrics.deborRate, currentOnChainRate)
         if (!safe) {
-          runtime.log(`  RATE GUARD: ${asset} deviation=${deviationBps}bps (new=${metrics.deborRate}, current=${currentRate}) exceeds 500bps threshold`)
+          runtime.log(`  RATE GUARD: ${asset} deviation=${deviationBps}bps (new=${metrics.deborRate}, current=${currentOnChainRate}) exceeds 500bps threshold`)
           runtime.log(`  Proceeding with caution — rate change is large but may be legitimate`)
         } else {
-          runtime.log(`  Rate guard OK: deviation=${deviationBps}bps (current=${currentRate}bps → new=${metrics.deborRate}bps)`)
+          runtime.log(`  Rate guard OK: deviation=${deviationBps}bps (current=${currentOnChainRate}bps → new=${metrics.deborRate}bps)`)
+        }
+
+        // Risk gate: evaluate circuit breaker thresholds using cached rate
+        if (thresholds) {
+          const deviation = Number(
+            metrics.deborRate > currentOnChainRate
+              ? metrics.deborRate - currentOnChainRate
+              : currentOnChainRate - metrics.deborRate,
+          )
+
+          if (deviation >= thresholds.varCritical) {
+            riskLevelNum = RISK_LEVEL_CRITICAL
+            isCircuitBreaker = true
+            runtime.log(`  CIRCUIT BREAKER: ${asset} deviation=${deviation}bps >= critical threshold ${thresholds.varCritical}bps`)
+          } else if (deviation >= thresholds.varWarning) {
+            riskLevelNum = RISK_LEVEL_HIGH
+            runtime.log(`  RISK WARNING: ${asset} deviation=${deviation}bps >= warning threshold ${thresholds.varWarning}bps`)
+          }
         }
       } else {
         runtime.log(`  Rate guard: no existing rate (first write)`)
       }
     } catch (e) {
       runtime.log(`  Rate guard: skipped (${e})`)
-    }
-  }
-
-  // ─── Inline Risk Gate (Circuit Breaker) ───
-  // If rate guard computed a large deviation AND config has thresholds, evaluate risk level.
-  // CRITICAL risk -> write alert report (type 1) instead of normal, halting the oracle.
-  const triggerTimestamp = parseTriggerTimestamp(payload)
-  const thresholds = runtime.config.riskThresholds
-  let isCircuitBreaker = false
-  let riskLevelNum = RISK_LEVEL_LOW
-
-  if (thresholds && targetNetwork) {
-    try {
-      const guardClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector)
-      const currentRateResult2 = guardClient
-        .callContract(runtime, {
-          call: encodeCallMsg({
-            from: zeroAddress,
-            to: oracleAddress as Address,
-            data: encodeFunctionData({
-              abi: DEBOR_ORACLE_READ_ABI,
-              functionName: 'getRate',
-            }),
-          }),
-          blockNumber: LATEST_BLOCK_NUMBER,
-        })
-        .result()
-
-      const currentRateForRisk = BigInt(
-        decodeFunctionResult({
-          abi: DEBOR_ORACLE_READ_ABI,
-          functionName: 'getRate',
-          data: bytesToHex(currentRateResult2.data),
-        }) as any,
-      )
-
-      if (currentRateForRisk > 0n) {
-        const deviation = Number(
-          metrics.deborRate > currentRateForRisk
-            ? metrics.deborRate - currentRateForRisk
-            : currentRateForRisk - metrics.deborRate,
-        )
-
-        if (deviation >= thresholds.varCritical) {
-          riskLevelNum = RISK_LEVEL_CRITICAL
-          isCircuitBreaker = true
-          runtime.log(`  CIRCUIT BREAKER: ${asset} deviation=${deviation}bps >= critical threshold ${thresholds.varCritical}bps`)
-        } else if (deviation >= thresholds.varWarning) {
-          riskLevelNum = RISK_LEVEL_HIGH
-          runtime.log(`  RISK WARNING: ${asset} deviation=${deviation}bps >= warning threshold ${thresholds.varWarning}bps`)
-        }
-      }
-    } catch (e) {
-      runtime.log(`  Risk gate: skipped (${e})`)
     }
   }
 
@@ -335,6 +305,31 @@ function runAssetBenchmark(runtime: Runtime<Config>, payload: CronPayload, asset
 
   const txHash = writeResult.txHash || new Uint8Array(32)
   runtime.log(`  TX succeeded: ${bytesToHex(txHash)}`)
+
+  // Step 6: Relay benchmark to L2s via CCIP (if configured)
+  const ccipSenderAddr = runtime.config.ccipSenderAddress
+  if (ccipSenderAddr) {
+    runtime.log(`Step 6: Relaying ${asset} benchmark to L2s via CCIP...`)
+    try {
+      const ccipReport = runtime.report(prepareReportRequest(reportData)).result()
+      const ccipResult = targetEvmClient
+        .writeReport(runtime, {
+          receiver: ccipSenderAddr,
+          report: ccipReport,
+          gasConfig: { gasLimit: '600000' },
+        })
+        .result()
+
+      if (ccipResult.txStatus === TxStatus.SUCCESS) {
+        runtime.log(`  CCIP relay TX: ${bytesToHex(ccipResult.txHash || new Uint8Array(32))}`)
+      } else {
+        runtime.log(`  CCIP relay failed: ${ccipResult.errorMessage || ccipResult.txStatus}`)
+      }
+    } catch (e) {
+      runtime.log(`  CCIP relay error: ${e}`)
+    }
+  }
+
   runtime.log(`=== DeBOR ${asset} Benchmark Update Complete ===`)
   return `${asset}: OK (${metrics.numSources} sources, ${metrics.deborRate}bps)`
 }
@@ -489,15 +484,48 @@ const onUsdcExtTrigger = (runtime: Runtime<Config>, payload: CronPayload): strin
 
   const txHash = writeResult.txHash || new Uint8Array(32)
   runtime.log(`  TX succeeded: ${bytesToHex(txHash)}`)
+
+  // Step 6: Relay merged USDC benchmark to L2s via CCIP
+  const ccipSenderAddr = runtime.config.ccipSenderAddress
+  if (ccipSenderAddr) {
+    runtime.log('Step 6: Relaying merged USDC benchmark to L2s via CCIP...')
+    try {
+      const ccipReportData = encodeAbiParameters(
+        parseAbiParameters('uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256'),
+        [mergedRate, mergedSupply, mergedSpread, mergedVol, mergedTerm, triggerTimestamp, totalSources, BigInt(allUsdcProtocols.length)],
+      )
+      const ccipReport = runtime.report(prepareReportRequest(ccipReportData)).result()
+      const ccipResult = targetEvmClient
+        .writeReport(runtime, {
+          receiver: ccipSenderAddr,
+          report: ccipReport,
+          gasConfig: { gasLimit: '600000' },
+        })
+        .result()
+
+      if (ccipResult.txStatus === TxStatus.SUCCESS) {
+        runtime.log(`  CCIP relay TX: ${bytesToHex(ccipResult.txHash || new Uint8Array(32))}`)
+      } else {
+        runtime.log(`  CCIP relay failed: ${ccipResult.errorMessage || ccipResult.txStatus}`)
+      }
+    } catch (e) {
+      runtime.log(`  CCIP relay error: ${e}`)
+    }
+  }
+
   runtime.log(`=== DeBOR USDC Extended Merge Complete: ${totalSources}/${allUsdcProtocols.length} sources ===`)
   return `USDC_EXT: MERGED OK (${totalSources}/${allUsdcProtocols.length} sources, ${mergedRate}bps)`
 }
 
-/// x402 Payment Gate: Verify caller has pre-purchased credits for premium actions
+/// x402 Payment Gate: Verify caller has pre-purchased credits for premium actions.
 /// Returns true if payment gate is not configured (free access) or caller has credits.
+/// Fail-closed: on error, denies access to protect premium data.
 const verifyPaymentGate = (runtime: Runtime<Config>, payer: string | undefined): boolean => {
   const gateAddr = runtime.config.paymentGateAddress
-  if (!gateAddr || !payer) return true // No gate configured or no payer = free access
+  if (!gateAddr) return true // No gate configured = free access
+  if (!payer) return false   // Gate configured but no payer = deny
+
+  const GATE_ABI = [{ inputs: [{ name: 'consumer', type: 'address' }], name: 'getCredits', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' }]
 
   try {
     const targetNetwork = getNetwork({
@@ -505,27 +533,26 @@ const verifyPaymentGate = (runtime: Runtime<Config>, payer: string | undefined):
       chainSelectorName: runtime.config.targetChainSelectorName,
       isTestnet: true,
     })
-    if (!targetNetwork) return true
+    if (!targetNetwork) return false // Fail closed
 
     const gateClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector)
-    const creditCalldata = encodeFunctionData({
-      abi: [{ inputs: [{ name: 'consumer', type: 'address' }], name: 'getCredits', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' }],
+    const callData = encodeFunctionData({
+      abi: GATE_ABI,
       functionName: 'getCredits',
       args: [payer as Address],
     })
 
     const creditResult = gateClient
       .callContract(runtime, {
-        toAddress: gateAddr,
-        data: bytesToHex(Buffer.from(creditCalldata.slice(2), 'hex')),
+        call: encodeCallMsg({ from: zeroAddress, to: gateAddr as Address, data: callData }),
         blockNumber: LATEST_BLOCK_NUMBER,
       })
       .result()
 
     const creditBalance = decodeFunctionResult({
-      abi: [{ inputs: [{ name: 'consumer', type: 'address' }], name: 'getCredits', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' }],
+      abi: GATE_ABI,
       functionName: 'getCredits',
-      data: `0x${creditResult.data}` as `0x${string}`,
+      data: bytesToHex(creditResult.data),
     })
 
     const minCredits = BigInt(runtime.config.paymentMinCredits || '1')
@@ -533,7 +560,7 @@ const verifyPaymentGate = (runtime: Runtime<Config>, payer: string | undefined):
     return (creditBalance as bigint) >= minCredits
   } catch (e) {
     runtime.log(`  x402 gate check error: ${e}`)
-    return true // Fail open for hackathon demo
+    return false // Fail closed: deny access on error
   }
 }
 

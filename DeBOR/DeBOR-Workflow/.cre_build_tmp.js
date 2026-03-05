@@ -17494,6 +17494,15 @@ var CHAINLINK_PRICE_FEED_ABI = [
     type: "function"
   }
 ];
+var DEBOR_AI_INSIGHT_ABI = [
+  {
+    inputs: [],
+    name: "isHighRisk",
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+    type: "function"
+  }
+];
 var PRICE_FEEDS = {
   "ETH/USD": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
   "BTC/USD": "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c",
@@ -17964,8 +17973,15 @@ function computeBenchmark(weightedRates, previousRates, sourcesConfigured = 0n) 
   };
 }
 var BENCHMARK_UPDATED_EVENT_SIG = "0x39b30b48c37c75c1a92ab0663ddea47330411f58b47a764238930f6f9bb0df16";
-var MAX_SWAPS_PER_BATCH = 10n;
-var RATE_SPIKE_THRESHOLD = 100n;
+function getMaxSwapsPerBatch(runtime2) {
+  return runtime2.config.maxSwapsPerBatch ? BigInt(runtime2.config.maxSwapsPerBatch) : 10n;
+}
+function getRateSpikeThreshold(runtime2) {
+  return runtime2.config.rateSpikeThreshold ? BigInt(runtime2.config.rateSpikeThreshold) : 100n;
+}
+function getAnomalyThreshold(runtime2) {
+  return runtime2.config.anomalyThreshold ? BigInt(runtime2.config.anomalyThreshold) : 200n;
+}
 function getSepoliaEvmClient(runtime2) {
   const network248 = getNetwork({
     chainFamily: "evm",
@@ -17982,7 +17998,7 @@ function readSwapView(runtime2, functionName) {
   const callData = encodeFunctionData({
     abi: DEBOR_SWAP_ABI,
     functionName,
-    args: [MAX_SWAPS_PER_BATCH]
+    args: [getMaxSwapsPerBatch(runtime2)]
   });
   try {
     const result = evmClient.callContract(runtime2, {
@@ -18048,6 +18064,33 @@ function readHistoricalRate(runtime2, periodsBack) {
     });
   } catch {
     return 0n;
+  }
+}
+function readAIHighRisk(runtime2) {
+  const aiAddr = runtime2.config.aiInsightAddress;
+  if (!aiAddr)
+    return false;
+  const evmClient = getSepoliaEvmClient(runtime2);
+  const callData = encodeFunctionData({
+    abi: DEBOR_AI_INSIGHT_ABI,
+    functionName: "isHighRisk"
+  });
+  try {
+    const result = evmClient.callContract(runtime2, {
+      call: encodeCallMsg({ from: zeroAddress, to: aiAddr, data: callData }),
+      blockNumber: LAST_FINALIZED_BLOCK_NUMBER
+    }).result();
+    const hex = bytesToHex(result.data);
+    if (hex === "0x" || result.data.length === 0)
+      return false;
+    return decodeFunctionResult({
+      abi: DEBOR_AI_INSIGHT_ABI,
+      functionName: "isHighRisk",
+      data: hex
+    });
+  } catch (e) {
+    runtime2.log(`  Warning: isHighRisk call failed: ${e}`);
+    return false;
   }
 }
 function writeSwapAction(runtime2, action, swapIds) {
@@ -18187,15 +18230,15 @@ var onBenchmarkUpdated = (runtime2, log) => {
     return `EVENT: rate=${newRate}bps, no history`;
   }
   runtime2.log(`  Previous rate: ${previousRate} bps`);
-  const ANOMALY_THRESHOLD = 200n;
+  const anomalyThreshold = getAnomalyThreshold(runtime2);
   const diff = newRate > previousRate ? newRate - previousRate : previousRate - newRate;
   runtime2.log(`  Rate change: ${diff} bps`);
-  if (diff <= ANOMALY_THRESHOLD) {
+  if (diff <= anomalyThreshold) {
     const summary2 = `NORMAL: ${newRate}bps (${diff}bps change)`;
     runtime2.log(`=== Anomaly Detector: ${summary2} ===`);
     return summary2;
   }
-  runtime2.log(`  ANOMALY DETECTED: ${diff}bps change exceeds ${ANOMALY_THRESHOLD}bps threshold!`);
+  runtime2.log(`  ANOMALY DETECTED: ${diff}bps change exceeds ${anomalyThreshold}bps threshold!`);
   const settleableIds = readSwapView(runtime2, "getSettleableSwaps");
   runtime2.log(`  ${settleableIds.length} swaps for emergency settlement`);
   if (settleableIds.length > 0) {
@@ -18223,7 +18266,7 @@ var onSwapLifecycle = (runtime2, payload) => {
     const trend = analyzeRateTrend(runtime2);
     runtime2.log(`  Rate: ${currentRate}bps, 1h ago: ${historicalRate}bps, move: ${diff}bps`);
     runtime2.log(`  Trend: ${trend.direction}, vel=${trend.velocity}bps/period, accel=${trend.acceleration}bps/period²`);
-    if (diff > RATE_SPIKE_THRESHOLD) {
+    if (diff > getRateSpikeThreshold(runtime2)) {
       spikeDetected = true;
       runtime2.log(`  SPIKE DETECTED: ${diff}bps move!`);
       results.push(`SPIKE:${diff}bps`);
@@ -18247,12 +18290,19 @@ var onSwapLifecycle = (runtime2, payload) => {
     }
   }
   runtime2.log("Phase 3: Settlement + closure...");
+  const aiHighRisk = readAIHighRisk(runtime2);
+  if (aiHighRisk) {
+    runtime2.log("  AI HOLD: risk level HIGH or CRITICAL, skipping settlement");
+    results.push("ai_hold:true");
+  }
   const settleableIds = readSwapView(runtime2, "getSettleableSwaps");
   runtime2.log(`  Settleable: ${settleableIds.length}`);
-  if (settleableIds.length > 0) {
+  if (settleableIds.length > 0 && !aiHighRisk) {
     runtime2.log(`  Batch settling ${settleableIds.length} swaps...`);
     const tx = writeSwapAction(runtime2, 1, settleableIds);
     runtime2.log(`  ${tx}`);
+  } else if (settleableIds.length > 0 && aiHighRisk) {
+    runtime2.log(`  Skipped ${settleableIds.length} settlements due to AI risk hold`);
   }
   const expiredIds = readSwapView(runtime2, "getExpiredSwaps");
   runtime2.log(`  Expired: ${expiredIds.length}`);
@@ -19259,7 +19309,60 @@ function readAllBenchmarks(runtime2) {
   }
   return snapshots;
 }
-function buildPrompt(snapshots, sofrRateBps) {
+function readHistoricalRatesFromLogs(runtime2, asset) {
+  const oracleAddress = runtime2.config.oracleAddresses[asset];
+  if (!oracleAddress)
+    return [];
+  const network248 = getNetwork({
+    chainFamily: "evm",
+    chainSelectorName: runtime2.config.targetChainSelectorName,
+    isTestnet: true
+  });
+  if (!network248)
+    return [];
+  const evmClient = new cre.capabilities.EVMClient(network248.chainSelector.selector);
+  try {
+    const headerResult = evmClient.headerByNumber(runtime2, { blockNumber: LATEST_BLOCK_NUMBER }).result();
+    let toBlock = 0n;
+    if (headerResult.header?.blockNumber) {
+      toBlock = protoBigIntToBigint(headerResult.header.blockNumber);
+    }
+    if (toBlock === 0n)
+      return [];
+    const fromBlock = toBlock > 2000n ? toBlock - 2000n : 0n;
+    const logs = evmClient.filterLogs(runtime2, {
+      filterQuery: {
+        addresses: [hexToBase64(oracleAddress)],
+        topics: [
+          { topic: [hexToBase64(BENCHMARK_UPDATED_EVENT_SIG)] }
+        ],
+        fromBlock: bigintToProtoBigInt(fromBlock),
+        toBlock: bigintToProtoBigInt(toBlock)
+      }
+    }).result();
+    if (!logs.logs || logs.logs.length === 0)
+      return [];
+    const points = [];
+    for (const log of logs.logs.slice(-10)) {
+      try {
+        const eventData = bytesToHex(log.data);
+        const decoded = decodeAbiParameters(parseAbiParameters("uint256, uint256, uint256, uint256, uint256, uint256"), eventData);
+        points.push({
+          rate: Number(decoded[0]),
+          supply: Number(decoded[1]),
+          spread: Number(decoded[2]),
+          vol: Number(decoded[3]),
+          sources: Number(decoded[5])
+        });
+      } catch {}
+    }
+    return points;
+  } catch (e) {
+    runtime2.log(`  filterLogs historical rates failed for ${asset}: ${e}`);
+    return [];
+  }
+}
+function buildPrompt(snapshots, sofrRateBps, historicalRates) {
   const rateLines = snapshots.map((s) => `  ${s.asset}: ${s.rate}bps`).join(`
 `);
   const spreadLines = snapshots.map((s) => `  ${s.asset}: ${s.spread}bps`).join(`
@@ -19292,7 +19395,26 @@ TRADFI COMPARISON:
 
 7-DAY TREND: Current=${primary?.rate || 0}bps, 7d avg=${primary?.term7d || 0}bps, direction=${direction}
 
+${buildHistoricalSection(historicalRates)}
 Classify risk level, direction, spread health, and anomaly status.`;
+}
+function buildHistoricalSection(historicalRates) {
+  const lines = [];
+  for (const [asset, points] of historicalRates) {
+    if (points.length === 0)
+      continue;
+    const rates = points.map((p) => `${p.rate}`).join(" -> ");
+    const oldest = points[0];
+    const newest = points[points.length - 1];
+    const delta = newest.rate - oldest.rate;
+    const sign = delta >= 0 ? "+" : "";
+    lines.push(`  ${asset}: [${rates}] (${sign}${delta}bps over ${points.length} updates)`);
+  }
+  if (lines.length === 0)
+    return "ON-CHAIN HISTORY: No recent BenchmarkUpdated events found";
+  return `ON-CHAIN RATE HISTORY (last ~6h from filterLogs):
+${lines.join(`
+`)}`;
 }
 function computeFallbackAnalysis(snapshots, sofrRateBps) {
   const primary = snapshots.find((s) => s.asset === "USDC") || snapshots[0];
@@ -19344,29 +19466,59 @@ function runAIAnalysis(runtime2) {
   } catch (e) {
     runtime2.log(`  SOFR fetch failed: ${e}`);
   }
-  runtime2.log("Step 3: Building analysis prompt...");
-  const prompt = buildPrompt(snapshots, sofrRateBps);
-  runtime2.log("Step 4: Calling LLM via HTTPClient...");
+  runtime2.log("Step 3: Reading on-chain rate history via filterLogs...");
+  const historicalRates = new Map;
+  const usdcHistory = readHistoricalRatesFromLogs(runtime2, "USDC");
+  if (usdcHistory.length > 0) {
+    historicalRates.set("USDC", usdcHistory);
+    runtime2.log(`  USDC: ${usdcHistory.length} historical events (${usdcHistory[0].rate} -> ${usdcHistory[usdcHistory.length - 1].rate}bps)`);
+  } else {
+    runtime2.log("  No historical events found");
+  }
+  runtime2.log("Step 4: Building analysis prompt...");
+  const prompt = buildPrompt(snapshots, sofrRateBps, historicalRates);
+  runtime2.log("Step 5: Calling LLM...");
   const model = runtime2.config.groqApiModel || DEFAULT_GROQ_MODEL;
   const apiKey = runtime2.config.groqApiKey || "";
   let result = computeFallbackAnalysis(snapshots, sofrRateBps);
-  if (!apiKey || apiKey === "YOUR_GROQ_API_KEY") {
-    runtime2.log("  GROQ_API_KEY not configured — using rule-based analysis");
-  } else {
+  const requestBody = JSON.stringify({
+    model,
+    temperature: 0,
+    seed: 42,
+    max_tokens: 500,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: prompt }
+    ]
+  });
+  let llmResponse = null;
+  try {
+    runtime2.log("  Attempting ConfidentialHTTPClient (TEE + VaultDON)...");
+    const confidentialClient = new cre.capabilities.ConfidentialHTTPClient;
+    llmResponse = confidentialClient.sendRequest(runtime2, {
+      vaultDonSecrets: [
+        { key: "GROQ_API_KEY", namespace: "workflow" }
+      ],
+      request: {
+        url: GROQ_API_URL,
+        method: "POST",
+        bodyString: requestBody,
+        multiHeaders: {
+          Authorization: { values: ["Bearer {{GROQ_API_KEY}}"] },
+          "Content-Type": { values: ["application/json"] }
+        }
+      }
+    }).result();
+    runtime2.log("  ConfidentialHTTPClient succeeded");
+  } catch (e) {
+    runtime2.log(`  ConfidentialHTTPClient unavailable: ${e}`);
+  }
+  if (!llmResponse && apiKey && apiKey !== "YOUR_GROQ_API_KEY") {
     try {
-      const requestBody = JSON.stringify({
-        model,
-        temperature: 0,
-        seed: 42,
-        max_tokens: 500,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: prompt }
-        ]
-      });
+      runtime2.log("  Falling back to HTTPClient (config key)...");
       const httpClient = new cre.capabilities.HTTPClient;
-      const response = httpClient.sendRequest(runtime2, {
+      llmResponse = httpClient.sendRequest(runtime2, {
         url: GROQ_API_URL,
         method: "POST",
         body: Buffer.from(requestBody).toString("base64"),
@@ -19375,8 +19527,14 @@ function runAIAnalysis(runtime2) {
           "Content-Type": "application/json"
         }
       }).result();
-      if (ok(response)) {
-        const body = JSON.parse(text(response));
+    } catch (e) {
+      runtime2.log(`  HTTPClient fallback failed: ${e}`);
+    }
+  }
+  if (llmResponse) {
+    try {
+      if (ok(llmResponse)) {
+        const body = JSON.parse(text(llmResponse));
         const content = body.choices?.[0]?.message?.content;
         if (content) {
           const parsed = JSON.parse(content);
@@ -19393,13 +19551,13 @@ function runAIAnalysis(runtime2) {
           runtime2.log("  LLM returned no content");
         }
       } else {
-        runtime2.log(`  LLM call returned status ${response.statusCode} — using rule-based analysis`);
-        result = computeFallbackAnalysis(snapshots, sofrRateBps);
+        runtime2.log(`  LLM call returned status ${llmResponse.statusCode} — using rule-based analysis`);
       }
     } catch (e) {
-      runtime2.log(`  LLM call failed: ${e} — using rule-based analysis`);
-      result = computeFallbackAnalysis(snapshots, sofrRateBps);
+      runtime2.log(`  LLM parse failed: ${e} — using rule-based analysis`);
     }
+  } else if (!apiKey || apiKey === "YOUR_GROQ_API_KEY") {
+    runtime2.log("  No LLM available (no VaultDON secret, no config key) — using rule-based analysis");
   }
   runtime2.log(`  Risk Level: ${result.riskLevel} (${result.riskScore}/100)`);
   runtime2.log(`  Anomaly: ${result.anomalyDetected} | Direction: ${result.rateDirection} | Spreads: ${result.spreadHealth}`);
@@ -19513,12 +19671,17 @@ function runAssetBenchmark(runtime2, payload, asset) {
     runtime2.log(`  No oracle deployed for ${asset}, skipping write`);
     return `${asset}: COMPUTED (${metrics.numSources} sources, ${metrics.deborRate}bps)`;
   }
-  runtime2.log("Step 3b: Dry-run rate guard (reading current on-chain rate)...");
+  runtime2.log("Step 3b: Rate guard + risk gate (reading current on-chain rate)...");
   const targetNetwork = getNetwork({
     chainFamily: "evm",
     chainSelectorName: runtime2.config.targetChainSelectorName,
     isTestnet: true
   });
+  const triggerTimestamp = parseTriggerTimestamp(payload);
+  const thresholds = runtime2.config.riskThresholds;
+  let isCircuitBreaker = false;
+  let riskLevelNum = RISK_LEVEL_LOW;
+  let currentOnChainRate = 0n;
   if (targetNetwork) {
     try {
       const guardClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector);
@@ -19533,62 +19696,35 @@ function runAssetBenchmark(runtime2, payload, asset) {
         }),
         blockNumber: LATEST_BLOCK_NUMBER
       }).result();
-      const currentRate = BigInt(decodeFunctionResult({
+      currentOnChainRate = BigInt(decodeFunctionResult({
         abi: DEBOR_ORACLE_READ_ABI,
         functionName: "getRate",
         data: bytesToHex(currentRateResult.data)
       }));
-      if (currentRate > 0n) {
-        const { deviationBps, safe } = computeRateDeviation(metrics.deborRate, currentRate);
+      if (currentOnChainRate > 0n) {
+        const { deviationBps, safe } = computeRateDeviation(metrics.deborRate, currentOnChainRate);
         if (!safe) {
-          runtime2.log(`  RATE GUARD: ${asset} deviation=${deviationBps}bps (new=${metrics.deborRate}, current=${currentRate}) exceeds 500bps threshold`);
+          runtime2.log(`  RATE GUARD: ${asset} deviation=${deviationBps}bps (new=${metrics.deborRate}, current=${currentOnChainRate}) exceeds 500bps threshold`);
           runtime2.log(`  Proceeding with caution — rate change is large but may be legitimate`);
         } else {
-          runtime2.log(`  Rate guard OK: deviation=${deviationBps}bps (current=${currentRate}bps → new=${metrics.deborRate}bps)`);
+          runtime2.log(`  Rate guard OK: deviation=${deviationBps}bps (current=${currentOnChainRate}bps → new=${metrics.deborRate}bps)`);
+        }
+        if (thresholds) {
+          const deviation = Number(metrics.deborRate > currentOnChainRate ? metrics.deborRate - currentOnChainRate : currentOnChainRate - metrics.deborRate);
+          if (deviation >= thresholds.varCritical) {
+            riskLevelNum = RISK_LEVEL_CRITICAL;
+            isCircuitBreaker = true;
+            runtime2.log(`  CIRCUIT BREAKER: ${asset} deviation=${deviation}bps >= critical threshold ${thresholds.varCritical}bps`);
+          } else if (deviation >= thresholds.varWarning) {
+            riskLevelNum = RISK_LEVEL_HIGH;
+            runtime2.log(`  RISK WARNING: ${asset} deviation=${deviation}bps >= warning threshold ${thresholds.varWarning}bps`);
+          }
         }
       } else {
         runtime2.log(`  Rate guard: no existing rate (first write)`);
       }
     } catch (e) {
       runtime2.log(`  Rate guard: skipped (${e})`);
-    }
-  }
-  const triggerTimestamp = parseTriggerTimestamp(payload);
-  const thresholds = runtime2.config.riskThresholds;
-  let isCircuitBreaker = false;
-  let riskLevelNum = RISK_LEVEL_LOW;
-  if (thresholds && targetNetwork) {
-    try {
-      const guardClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector);
-      const currentRateResult2 = guardClient.callContract(runtime2, {
-        call: encodeCallMsg({
-          from: zeroAddress,
-          to: oracleAddress,
-          data: encodeFunctionData({
-            abi: DEBOR_ORACLE_READ_ABI,
-            functionName: "getRate"
-          })
-        }),
-        blockNumber: LATEST_BLOCK_NUMBER
-      }).result();
-      const currentRateForRisk = BigInt(decodeFunctionResult({
-        abi: DEBOR_ORACLE_READ_ABI,
-        functionName: "getRate",
-        data: bytesToHex(currentRateResult2.data)
-      }));
-      if (currentRateForRisk > 0n) {
-        const deviation = Number(metrics.deborRate > currentRateForRisk ? metrics.deborRate - currentRateForRisk : currentRateForRisk - metrics.deborRate);
-        if (deviation >= thresholds.varCritical) {
-          riskLevelNum = RISK_LEVEL_CRITICAL;
-          isCircuitBreaker = true;
-          runtime2.log(`  CIRCUIT BREAKER: ${asset} deviation=${deviation}bps >= critical threshold ${thresholds.varCritical}bps`);
-        } else if (deviation >= thresholds.varWarning) {
-          riskLevelNum = RISK_LEVEL_HIGH;
-          runtime2.log(`  RISK WARNING: ${asset} deviation=${deviation}bps >= warning threshold ${thresholds.varWarning}bps`);
-        }
-      }
-    } catch (e) {
-      runtime2.log(`  Risk gate: skipped (${e})`);
     }
   }
   if (isCircuitBreaker) {
@@ -19656,6 +19792,25 @@ function runAssetBenchmark(runtime2, payload, asset) {
   }
   const txHash = writeResult.txHash || new Uint8Array(32);
   runtime2.log(`  TX succeeded: ${bytesToHex(txHash)}`);
+  const ccipSenderAddr = runtime2.config.ccipSenderAddress;
+  if (ccipSenderAddr) {
+    runtime2.log(`Step 6: Relaying ${asset} benchmark to L2s via CCIP...`);
+    try {
+      const ccipReport = runtime2.report(prepareReportRequest(reportData)).result();
+      const ccipResult = targetEvmClient.writeReport(runtime2, {
+        receiver: ccipSenderAddr,
+        report: ccipReport,
+        gasConfig: { gasLimit: "600000" }
+      }).result();
+      if (ccipResult.txStatus === TxStatus.SUCCESS) {
+        runtime2.log(`  CCIP relay TX: ${bytesToHex(ccipResult.txHash || new Uint8Array(32))}`);
+      } else {
+        runtime2.log(`  CCIP relay failed: ${ccipResult.errorMessage || ccipResult.txStatus}`);
+      }
+    } catch (e) {
+      runtime2.log(`  CCIP relay error: ${e}`);
+    }
+  }
   runtime2.log(`=== DeBOR ${asset} Benchmark Update Complete ===`);
   return `${asset}: OK (${metrics.numSources} sources, ${metrics.deborRate}bps)`;
 }
@@ -19764,13 +19919,36 @@ var onUsdcExtTrigger = (runtime2, payload) => {
   }
   const txHash = writeResult.txHash || new Uint8Array(32);
   runtime2.log(`  TX succeeded: ${bytesToHex(txHash)}`);
+  const ccipSenderAddr = runtime2.config.ccipSenderAddress;
+  if (ccipSenderAddr) {
+    runtime2.log("Step 6: Relaying merged USDC benchmark to L2s via CCIP...");
+    try {
+      const ccipReportData = encodeAbiParameters(parseAbiParameters("uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256"), [mergedRate, mergedSupply, mergedSpread, mergedVol, mergedTerm, triggerTimestamp, totalSources, BigInt(allUsdcProtocols.length)]);
+      const ccipReport = runtime2.report(prepareReportRequest(ccipReportData)).result();
+      const ccipResult = targetEvmClient.writeReport(runtime2, {
+        receiver: ccipSenderAddr,
+        report: ccipReport,
+        gasConfig: { gasLimit: "600000" }
+      }).result();
+      if (ccipResult.txStatus === TxStatus.SUCCESS) {
+        runtime2.log(`  CCIP relay TX: ${bytesToHex(ccipResult.txHash || new Uint8Array(32))}`);
+      } else {
+        runtime2.log(`  CCIP relay failed: ${ccipResult.errorMessage || ccipResult.txStatus}`);
+      }
+    } catch (e) {
+      runtime2.log(`  CCIP relay error: ${e}`);
+    }
+  }
   runtime2.log(`=== DeBOR USDC Extended Merge Complete: ${totalSources}/${allUsdcProtocols.length} sources ===`);
   return `USDC_EXT: MERGED OK (${totalSources}/${allUsdcProtocols.length} sources, ${mergedRate}bps)`;
 };
 var verifyPaymentGate = (runtime2, payer) => {
   const gateAddr = runtime2.config.paymentGateAddress;
-  if (!gateAddr || !payer)
+  if (!gateAddr)
     return true;
+  if (!payer)
+    return false;
+  const GATE_ABI = [{ inputs: [{ name: "consumer", type: "address" }], name: "getCredits", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" }];
   try {
     const targetNetwork = getNetwork({
       chainFamily: "evm",
@@ -19778,29 +19956,28 @@ var verifyPaymentGate = (runtime2, payer) => {
       isTestnet: true
     });
     if (!targetNetwork)
-      return true;
+      return false;
     const gateClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector);
-    const creditCalldata = encodeFunctionData({
-      abi: [{ inputs: [{ name: "consumer", type: "address" }], name: "getCredits", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" }],
+    const callData = encodeFunctionData({
+      abi: GATE_ABI,
       functionName: "getCredits",
       args: [payer]
     });
     const creditResult = gateClient.callContract(runtime2, {
-      toAddress: gateAddr,
-      data: bytesToHex(Buffer.from(creditCalldata.slice(2), "hex")),
+      call: encodeCallMsg({ from: zeroAddress, to: gateAddr, data: callData }),
       blockNumber: LATEST_BLOCK_NUMBER
     }).result();
     const creditBalance = decodeFunctionResult({
-      abi: [{ inputs: [{ name: "consumer", type: "address" }], name: "getCredits", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" }],
+      abi: GATE_ABI,
       functionName: "getCredits",
-      data: `0x${creditResult.data}`
+      data: bytesToHex(creditResult.data)
     });
     const minCredits = BigInt(runtime2.config.paymentMinCredits || "1");
     runtime2.log(`  x402 gate: ${payer} has ${creditBalance} credits (min: ${minCredits})`);
     return creditBalance >= minCredits;
   } catch (e) {
     runtime2.log(`  x402 gate check error: ${e}`);
-    return true;
+    return false;
   }
 };
 var onHttpTrigger = (runtime2, payload) => {
@@ -19829,9 +20006,8 @@ var onHttpTrigger = (runtime2, payload) => {
       const aiResultJson = runAIAnalysis(runtime2);
       const aiResult = JSON.parse(aiResultJson);
       const aiInsightAddr = runtime2.config.aiInsightAddress;
-      runtime2.log(`  AI write target: ${aiInsightAddr || "none"}`);
       if (aiInsightAddr) {
-        runtime2.log(`  Encoding AI verdict for on-chain write...`);
+        runtime2.log(`  Writing AI verdict to DeBORAIInsight (${aiInsightAddr})...`);
         try {
           const RISK_LEVEL_MAP = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
           const DIRECTION_MAP = { STABLE: 0, RISING: 1, FALLING: 2 };
