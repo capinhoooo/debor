@@ -62,7 +62,18 @@ contract DeBORPaymentGate is Ownable {
         emit CreditConsumed(consumer, credits[consumer]);
     }
 
+    /// @notice Atomically check and consume a credit. Reverts if insufficient.
+    /// @dev Use this for fail-closed enforcement. If this reverts, deny the premium action.
+    function requireAndConsumeCredit(address consumer) external onlyOwner returns (bool) {
+        if (credits[consumer] == 0) revert InsufficientCredits(consumer, 0, 1);
+        credits[consumer] -= 1;
+        totalCreditsConsumed += 1;
+        emit CreditConsumed(consumer, credits[consumer]);
+        return true;
+    }
+
     /// @notice Check if an address has at least `minCredits` credits
+    /// @dev Prefer requireAndConsumeCredit() for fail-closed enforcement.
     function hasCredits(address consumer, uint256 minCredits) external view returns (bool) {
         return credits[consumer] >= minCredits;
     }
