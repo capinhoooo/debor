@@ -67,6 +67,9 @@ const configSchema = z.object({
     hhiWarning: z.number(),
     spreadWarning: z.number(),
   }).optional(),
+  aiInsightAddress: z.string().optional(),
+  paymentGateAddress: z.string().optional(),
+  paymentMinCredits: z.string().optional(),
 })
 
 function parseTriggerTimestamp(payload: CronPayload): bigint {
@@ -581,6 +584,7 @@ const onHttpTrigger = (runtime: Runtime<Config>, payload: any): string => {
       // ─── AI Feedback Loop: Write AI verdict to DeBORAIInsight contract ───
       const aiInsightAddr = runtime.config.aiInsightAddress
       if (aiInsightAddr) {
+        runtime.log(`  Writing AI verdict to DeBORAIInsight (${aiInsightAddr})...`)
         try {
           const RISK_LEVEL_MAP: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 }
           const DIRECTION_MAP: Record<string, number> = { STABLE: 0, RISING: 1, FALLING: 2 }

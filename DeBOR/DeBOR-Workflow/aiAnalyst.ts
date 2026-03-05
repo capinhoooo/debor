@@ -171,14 +171,51 @@ interface LLMCallResult {
   analyzedAt: number
 }
 
-const LLM_DEFAULTS: LLMCallResult = {
-  riskLevel: 'MEDIUM',
-  riskScore: 50,
-  anomalyDetected: false,
-  rateDirection: 'STABLE',
-  spreadHealth: 'NORMAL',
-  explanation: 'LLM unavailable, returning defaults',
-  analyzedAt: 0,
+function computeFallbackAnalysis(snapshots: AssetSnapshot[], sofrRateBps: number): LLMCallResult {
+  // Rule-based analysis when LLM is unavailable
+  const primary = snapshots.find(s => s.asset === 'USDC') || snapshots[0]
+  if (!primary) {
+    return { riskLevel: 'MEDIUM', riskScore: 50, anomalyDetected: false, rateDirection: 'STABLE', spreadHealth: 'NORMAL', explanation: 'No oracle data for analysis', analyzedAt: 0 }
+  }
+
+  // Rate direction from 7d term
+  const rateDirection = primary.rate > primary.term7d + 15 ? 'RISING'
+    : primary.rate < primary.term7d - 15 ? 'FALLING' : 'STABLE'
+
+  // Spread health from average spread
+  const avgSpread = snapshots.reduce((s, b) => s + b.spread, 0) / snapshots.length
+  const spreadHealth = avgSpread > 300 ? 'INVERTED' : avgSpread > 150 ? 'COMPRESSED' : 'NORMAL'
+
+  // Volatility-based risk scoring
+  const avgVol = snapshots.reduce((s, b) => s + b.vol, 0) / snapshots.length
+  const volScore = Math.min(avgVol / 500000, 40) // up to 40 pts from vol
+
+  // DeFi premium risk
+  const stables = snapshots.filter(s => ['USDC', 'DAI', 'USDT'].includes(s.asset))
+  const avgStableRate = stables.length > 0
+    ? stables.reduce((s, b) => s + b.rate, 0) / stables.length : 0
+  const premiumBps = Math.abs(avgStableRate - sofrRateBps)
+  const premiumScore = Math.min(premiumBps / 10, 30) // up to 30 pts from premium
+
+  // Source health
+  const totalSources = snapshots.reduce((s, b) => s + b.sources, 0)
+  const totalConfigured = snapshots.reduce((s, b) => s + b.configured, 0)
+  const sourceRatio = totalConfigured > 0 ? totalSources / totalConfigured : 1
+  const sourceScore = (1 - sourceRatio) * 30 // up to 30 pts from missing sources
+
+  const riskScore = Math.round(Math.min(volScore + premiumScore + sourceScore, 100))
+  const riskLevel = riskScore <= 25 ? 'LOW' : riskScore <= 50 ? 'MEDIUM' : riskScore <= 75 ? 'HIGH' : 'CRITICAL'
+  const anomalyDetected = riskScore > 75 || avgVol > 50000000
+
+  const parts: string[] = []
+  if (rateDirection !== 'STABLE') parts.push(`rates ${rateDirection.toLowerCase()}`)
+  if (spreadHealth !== 'NORMAL') parts.push(`spreads ${spreadHealth.toLowerCase()}`)
+  if (premiumBps > 50) parts.push(`DeFi premium ${premiumBps}bps`)
+  const explanation = parts.length > 0
+    ? `Rule-based: ${parts.join(', ')}`
+    : `Rule-based: stable market, vol=${Math.round(avgVol)}`
+
+  return { riskLevel, riskScore, anomalyDetected, rateDirection, spreadHealth, explanation, analyzedAt: 0 }
 }
 
 // ------------------------------------------------------------------
@@ -221,10 +258,10 @@ export function runAIAnalysis(runtime: Runtime<Config>): string {
   const model = runtime.config.groqApiModel || DEFAULT_GROQ_MODEL
   const apiKey = runtime.config.groqApiKey || ''
 
-  let result: LLMCallResult = { ...LLM_DEFAULTS }
+  let result: LLMCallResult = computeFallbackAnalysis(snapshots, sofrRateBps)
 
-  if (!apiKey) {
-    runtime.log('  GROQ_API_KEY not configured — returning defaults')
+  if (!apiKey || apiKey === 'YOUR_GROQ_API_KEY') {
+    runtime.log('  GROQ_API_KEY not configured — using rule-based analysis')
   } else {
     try {
       const requestBody = JSON.stringify({
@@ -270,10 +307,12 @@ export function runAIAnalysis(runtime: Runtime<Config>): string {
           runtime.log('  LLM returned no content')
         }
       } else {
-        runtime.log(`  LLM call returned status ${response.statusCode}`)
+        runtime.log(`  LLM call returned status ${response.statusCode} — using rule-based analysis`)
+        result = computeFallbackAnalysis(snapshots, sofrRateBps)
       }
     } catch (e) {
-      runtime.log(`  LLM call failed: ${e}`)
+      runtime.log(`  LLM call failed: ${e} — using rule-based analysis`)
+      result = computeFallbackAnalysis(snapshots, sofrRateBps)
     }
   }
 
