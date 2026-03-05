@@ -3,14 +3,19 @@ import {
   encodeCallMsg,
   getNetwork,
   bytesToHex,
+  hexToBase64,
+  bigintToProtoBigInt,
+  protoBigIntToBigint,
   safeJsonStringify,
   ok,
   text,
   LAST_FINALIZED_BLOCK_NUMBER,
+  LATEST_BLOCK_NUMBER,
   type Runtime,
 } from '@chainlink/cre-sdk'
-import { encodeFunctionData, decodeFunctionResult, zeroAddress } from 'viem'
+import { encodeFunctionData, decodeFunctionResult, decodeAbiParameters, parseAbiParameters, zeroAddress } from 'viem'
 import { DEBOR_ORACLE_READ_ABI } from './abis'
+import { BENCHMARK_UPDATED_EVENT_SIG } from './swapManager'
 import { fetchSOFR } from './sofrComparator'
 import type { Config, AssetClass, AIAnalysis } from './types'
 
@@ -98,12 +103,99 @@ function readAllBenchmarks(runtime: Runtime<Config>): AssetSnapshot[] {
 }
 
 // ------------------------------------------------------------------
+// Historical Rate Reader (filterLogs)
+// ------------------------------------------------------------------
+
+interface HistoricalRatePoint {
+  rate: number
+  supply: number
+  spread: number
+  vol: number
+  sources: number
+}
+
+function readHistoricalRatesFromLogs(
+  runtime: Runtime<Config>,
+  asset: AssetClass,
+): HistoricalRatePoint[] {
+  const oracleAddress = runtime.config.oracleAddresses[asset]
+  if (!oracleAddress) return []
+
+  const network = getNetwork({
+    chainFamily: 'evm',
+    chainSelectorName: runtime.config.targetChainSelectorName,
+    isTestnet: true,
+  })
+  if (!network) return []
+
+  const evmClient = new cre.capabilities.EVMClient(network.chainSelector.selector)
+
+  try {
+    // Get latest block for range calculation
+    const headerResult = evmClient
+      .headerByNumber(runtime, { blockNumber: LATEST_BLOCK_NUMBER })
+      .result()
+
+    let toBlock = 0n
+    if (headerResult.header?.blockNumber) {
+      toBlock = protoBigIntToBigint(headerResult.header.blockNumber)
+    }
+    if (toBlock === 0n) return []
+
+    // ~2000 blocks lookback (~6.6 hours on Sepolia at 12s blocks)
+    const fromBlock = toBlock > 2000n ? toBlock - 2000n : 0n
+
+    const logs = evmClient
+      .filterLogs(runtime, {
+        filterQuery: {
+          addresses: [hexToBase64(oracleAddress)],
+          topics: [
+            { topic: [hexToBase64(BENCHMARK_UPDATED_EVENT_SIG)] },
+          ],
+          fromBlock: bigintToProtoBigInt(fromBlock),
+          toBlock: bigintToProtoBigInt(toBlock),
+        },
+      })
+      .result()
+
+    if (!logs.logs || logs.logs.length === 0) return []
+
+    const points: HistoricalRatePoint[] = []
+    // BenchmarkUpdated event: (deborRate, deborSupply, deborSpread, deborVol, deborTerm7d, numSources)
+    for (const log of logs.logs.slice(-10)) { // last 10 events max
+      try {
+        const eventData = bytesToHex(log.data)
+        const decoded = decodeAbiParameters(
+          parseAbiParameters('uint256, uint256, uint256, uint256, uint256, uint256'),
+          eventData as `0x${string}`,
+        )
+        points.push({
+          rate: Number(decoded[0]),
+          supply: Number(decoded[1]),
+          spread: Number(decoded[2]),
+          vol: Number(decoded[3]),
+          sources: Number(decoded[5]),
+        })
+      } catch {
+        // skip malformed events
+      }
+    }
+
+    return points
+  } catch (e) {
+    runtime.log(`  filterLogs historical rates failed for ${asset}: ${e}`)
+    return []
+  }
+}
+
+// ------------------------------------------------------------------
 // Prompt Builder
 // ------------------------------------------------------------------
 
 function buildPrompt(
   snapshots: AssetSnapshot[],
   sofrRateBps: number,
+  historicalRates: Map<AssetClass, HistoricalRatePoint[]>,
 ): string {
   const rateLines = snapshots
     .map(s => `  ${s.asset}: ${s.rate}bps`)
@@ -154,7 +246,23 @@ TRADFI COMPARISON:
 
 7-DAY TREND: Current=${primary?.rate || 0}bps, 7d avg=${primary?.term7d || 0}bps, direction=${direction}
 
+${buildHistoricalSection(historicalRates)}
 Classify risk level, direction, spread health, and anomaly status.`
+}
+
+function buildHistoricalSection(historicalRates: Map<AssetClass, HistoricalRatePoint[]>): string {
+  const lines: string[] = []
+  for (const [asset, points] of historicalRates) {
+    if (points.length === 0) continue
+    const rates = points.map(p => `${p.rate}`).join(' -> ')
+    const oldest = points[0]
+    const newest = points[points.length - 1]
+    const delta = newest.rate - oldest.rate
+    const sign = delta >= 0 ? '+' : ''
+    lines.push(`  ${asset}: [${rates}] (${sign}${delta}bps over ${points.length} updates)`)
+  }
+  if (lines.length === 0) return 'ON-CHAIN HISTORY: No recent BenchmarkUpdated events found'
+  return `ON-CHAIN RATE HISTORY (last ~6h from filterLogs):\n${lines.join('\n')}`
 }
 
 // ------------------------------------------------------------------
@@ -247,37 +355,76 @@ export function runAIAnalysis(runtime: Runtime<Config>): string {
     runtime.log(`  SOFR fetch failed: ${e}`)
   }
 
-  // Step 3: Build prompt from all data
-  runtime.log('Step 3: Building analysis prompt...')
-  const prompt = buildPrompt(snapshots, sofrRateBps)
+  // Step 3: Read on-chain historical rates via filterLogs (BenchmarkUpdated events)
+  // Uses USDC oracle only to conserve EVM call budget (1 headerByNumber + 1 filterLogs)
+  runtime.log('Step 3: Reading on-chain rate history via filterLogs...')
+  const historicalRates = new Map<AssetClass, HistoricalRatePoint[]>()
+  const usdcHistory = readHistoricalRatesFromLogs(runtime, 'USDC')
+  if (usdcHistory.length > 0) {
+    historicalRates.set('USDC', usdcHistory)
+    runtime.log(`  USDC: ${usdcHistory.length} historical events (${usdcHistory[0].rate} -> ${usdcHistory[usdcHistory.length - 1].rate}bps)`)
+  } else {
+    runtime.log('  No historical events found')
+  }
 
-  // Step 4: Call LLM via HTTPClient (1 HTTP call)
-  // Uses deprecated headers map (multiHeaders doesn't serialize correctly via fromJson)
-  // In production DON: use ConfidentialHTTPClient with VaultDON for secret injection
-  runtime.log('Step 4: Calling LLM via HTTPClient...')
+  // Step 4: Build prompt from all data
+  runtime.log('Step 4: Building analysis prompt...')
+  const prompt = buildPrompt(snapshots, sofrRateBps, historicalRates)
+
+  // Step 5: Call LLM via ConfidentialHTTPClient (TEE-based, API key stays in VaultDON)
+  // Falls back to regular HTTPClient (config key) then to rule-based analysis
+  runtime.log('Step 5: Calling LLM...')
   const model = runtime.config.groqApiModel || DEFAULT_GROQ_MODEL
   const apiKey = runtime.config.groqApiKey || ''
 
   let result: LLMCallResult = computeFallbackAnalysis(snapshots, sofrRateBps)
 
-  if (!apiKey || apiKey === 'YOUR_GROQ_API_KEY') {
-    runtime.log('  GROQ_API_KEY not configured — using rule-based analysis')
-  } else {
-    try {
-      const requestBody = JSON.stringify({
-        model,
-        temperature: 0,
-        seed: 42,
-        max_tokens: 500,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: prompt },
-        ],
-      })
+  const requestBody = JSON.stringify({
+    model,
+    temperature: 0,
+    seed: 42,
+    max_tokens: 500,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: prompt },
+    ],
+  })
 
+  let llmResponse: any = null
+
+  // Strategy 1: ConfidentialHTTPClient with VaultDON secret (preferred)
+  // API key and prompt content never leave the TEE
+  try {
+    runtime.log('  Attempting ConfidentialHTTPClient (TEE + VaultDON)...')
+    const confidentialClient = new cre.capabilities.ConfidentialHTTPClient()
+    llmResponse = confidentialClient
+      .sendRequest(runtime, {
+        vaultDonSecrets: [
+          { key: 'GROQ_API_KEY', namespace: 'workflow' },
+        ],
+        request: {
+          url: GROQ_API_URL,
+          method: 'POST',
+          bodyString: requestBody,
+          multiHeaders: {
+            'Authorization': { values: ['Bearer {{GROQ_API_KEY}}'] },
+            'Content-Type': { values: ['application/json'] },
+          },
+        },
+      })
+      .result()
+    runtime.log('  ConfidentialHTTPClient succeeded')
+  } catch (e) {
+    runtime.log(`  ConfidentialHTTPClient unavailable: ${e}`)
+  }
+
+  // Strategy 2: Regular HTTPClient with config key (simulation fallback)
+  if (!llmResponse && apiKey && apiKey !== 'YOUR_GROQ_API_KEY') {
+    try {
+      runtime.log('  Falling back to HTTPClient (config key)...')
       const httpClient = new cre.capabilities.HTTPClient()
-      const response = httpClient
+      llmResponse = httpClient
         .sendRequest(runtime, {
           url: GROQ_API_URL,
           method: 'POST',
@@ -288,9 +435,16 @@ export function runAIAnalysis(runtime: Runtime<Config>): string {
           },
         })
         .result()
+    } catch (e) {
+      runtime.log(`  HTTPClient fallback failed: ${e}`)
+    }
+  }
 
-      if (ok(response)) {
-        const body = JSON.parse(text(response))
+  // Parse LLM response (from either client)
+  if (llmResponse) {
+    try {
+      if (ok(llmResponse)) {
+        const body = JSON.parse(text(llmResponse))
         const content = body.choices?.[0]?.message?.content
         if (content) {
           const parsed = JSON.parse(content)
@@ -307,13 +461,13 @@ export function runAIAnalysis(runtime: Runtime<Config>): string {
           runtime.log('  LLM returned no content')
         }
       } else {
-        runtime.log(`  LLM call returned status ${response.statusCode} — using rule-based analysis`)
-        result = computeFallbackAnalysis(snapshots, sofrRateBps)
+        runtime.log(`  LLM call returned status ${llmResponse.statusCode} — using rule-based analysis`)
       }
     } catch (e) {
-      runtime.log(`  LLM call failed: ${e} — using rule-based analysis`)
-      result = computeFallbackAnalysis(snapshots, sofrRateBps)
+      runtime.log(`  LLM parse failed: ${e} — using rule-based analysis`)
     }
+  } else if (!apiKey || apiKey === 'YOUR_GROQ_API_KEY') {
+    runtime.log('  No LLM available (no VaultDON secret, no config key) — using rule-based analysis')
   }
 
   runtime.log(`  Risk Level: ${result.riskLevel} (${result.riskScore}/100)`)
