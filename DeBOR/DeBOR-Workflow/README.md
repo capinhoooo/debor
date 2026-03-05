@@ -331,7 +331,7 @@ ABI definitions for all on-chain interactions:
 - 8 DAI sources (Aave x5, Spark x1, Moonwell x1, Benqi x1)
 - 6 USDT sources (Aave x5, Moonwell x1)
 - Target: Sepolia (`ethereum-testnet-sepolia`)
-- Swap contract: `0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291`
+- Swap contract: `0x21f2B4D2972045031c88F2e6D3430dD8646a5497`
 
 ### [`workflow.yaml`](workflow.yaml) — CRE Workflow Settings
 
@@ -402,6 +402,16 @@ cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interacti
 cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 3 --broadcast   # DAI
 cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 4 --broadcast   # USDT
 cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 8 --broadcast   # USDC ext (14/14)
+
+# Broadcast HTTP actions (on-demand analysis)
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 7 --broadcast \
+  --http-payload '{"action":"risk"}'                                    # Risk analysis (VaR/CVaR/HHI/Basel)
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 7 --broadcast \
+  --http-payload '{"action":"analyze"}'                                 # AI insight → DeBORAIInsight contract
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 7 --broadcast \
+  --http-payload '{"action":"validate"}'                                # Validation + SOFR cross-ref
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 7 --broadcast \
+  --http-payload '{"action":"compare"}'                                 # SOFR/EFFR comparison
 ```
 
 Run trigger 8 (USDC ext) AFTER trigger 0 (USDC core) — it merges core + extended sources into 14/14.

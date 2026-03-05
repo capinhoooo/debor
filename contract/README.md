@@ -1,6 +1,6 @@
 # DeBOR Smart Contracts
 
-Solidity smart contracts for the DeBOR protocol. Built with Foundry. 80 tests passing.
+Solidity smart contracts for the DeBOR protocol. Built with Foundry. 105 tests passing.
 
 ---
 
@@ -39,11 +39,11 @@ function getHistoricalRate(uint256 periodsBack) external view returns (uint256) 
 
 | Asset | Address |
 |-------|---------|
-| USDC | [`0x80Be9b18DCb40E216682aA8972b64F93a4716FE6`](https://sepolia.etherscan.io/address/0x80Be9b18DCb40E216682aA8972b64F93a4716FE6) |
-| ETH | [`0x8D7EBA5Ef17D69b234746fdbB9722EC52135B9A8`](https://sepolia.etherscan.io/address/0x8D7EBA5Ef17D69b234746fdbB9722EC52135B9A8) |
-| BTC | [`0x1Ee00d2bd54C6200905BB4746bFDFB3eB4Be24fD`](https://sepolia.etherscan.io/address/0x1Ee00d2bd54C6200905BB4746bFDFB3eB4Be24fD) |
-| DAI | [`0xdF989f502Ba3d9664c4a8B7bA675a0F34990b608`](https://sepolia.etherscan.io/address/0xdF989f502Ba3d9664c4a8B7bA675a0F34990b608) |
-| USDT | [`0x2F565693410D51Be42c664B566F244EDe7Be772c`](https://sepolia.etherscan.io/address/0x2F565693410D51Be42c664B566F244EDe7Be772c) |
+| USDC | [`0x582cd24653ddB50bC23383457b2493487F1E4e68`](https://sepolia.etherscan.io/address/0x582cd24653ddB50bC23383457b2493487F1E4e68) |
+| ETH | [`0x846D1d2424BBe8C16E9Ac5e59a2915298cFecFeA`](https://sepolia.etherscan.io/address/0x846D1d2424BBe8C16E9Ac5e59a2915298cFecFeA) |
+| BTC | [`0xB2e0D3663Ae773e8D8EF7186a29FfFb07209fa24`](https://sepolia.etherscan.io/address/0xB2e0D3663Ae773e8D8EF7186a29FfFb07209fa24) |
+| DAI | [`0xA1ccf4604c0ee3c43e44914a82d27935f8E3a2E0`](https://sepolia.etherscan.io/address/0xA1ccf4604c0ee3c43e44914a82d27935f8E3a2E0) |
+| USDT | [`0x2A43a60233435F990b327AD06c6Da06eB36dBBaF`](https://sepolia.etherscan.io/address/0x2A43a60233435F990b327AD06c6Da06eB36dBBaF) |
 
 ---
 
@@ -103,7 +103,7 @@ function tokenURI(uint256 tokenId) public view returns (string memory)
 // Returns Base64-encoded JSON with: Role, Swap ID, Fixed Rate, Notional, Status
 ```
 
-**Deployed:** [`0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291`](https://sepolia.etherscan.io/address/0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291) (Sepolia)
+**Deployed:** [`0x21f2B4D2972045031c88F2e6D3430dD8646a5497`](https://sepolia.etherscan.io/address/0x21f2B4D2972045031c88F2e6D3430dD8646a5497) (Sepolia)
 
 ---
 
@@ -126,14 +126,14 @@ function getTotalFee(bytes benchmarkData) external view returns (uint256) // Fee
 function addDestination(uint64 chainSelector, address receiver) external  // Admin: add L2 target
 ```
 
-**Deployed:** [`0xE99c38245EA789E9102Dc23EE28FAd3ed67d2432`](https://sepolia.etherscan.io/address/0xE99c38245EA789E9102Dc23EE28FAd3ed67d2432) (Sepolia)
+**Deployed:** [`0xb09A5F2B70dAD8fbBe03C23e80883c9900Add3F0`](https://sepolia.etherscan.io/address/0xb09A5F2B70dAD8fbBe03C23e80883c9900Add3F0) (Sepolia)
 
 **Active destinations (3):**
 | Chain | Selector | Receiver |
 |-------|----------|----------|
-| Base Sepolia | `10344971235874465080` | `0xf11b0c2c3C23eeBa32AB9a5340C767ccB152fA57` |
-| Arb Sepolia | `3478487238524512106` | `0xc6C927c77D9BFaFb7b9e003db6D96F3605ba2514` |
-| OP Sepolia | `5224473277236331295` | `0xd8EcF5D6D77bF2852c5e9313F87f31cc99c38dE9` |
+| Base Sepolia | `10344971235874465080` | `0x99346FAbefdA21E17E49DEAC0e25a49c2B0cB084` |
+| Arb Sepolia | `3478487238524512106` | `0xE8163650f9e5bdAcd1e449f2fB70a5677bbA62ED` |
+| OP Sepolia | `5224473277236331295` | `0xecB93f03515DE67EA43272797Ea8eDa059985894` |
 
 ---
 
@@ -164,9 +164,9 @@ function getHistoricalRate(uint256 periodsBack) external view returns (uint256)
 **Deployed:**
 | Chain | Address |
 |-------|---------|
-| Base Sepolia | [`0xf11b0c2c3C23eeBa32AB9a5340C767ccB152fA57`](https://sepolia.basescan.org/address/0xf11b0c2c3C23eeBa32AB9a5340C767ccB152fA57) |
-| Arb Sepolia | [`0xc6C927c77D9BFaFb7b9e003db6D96F3605ba2514`](https://sepolia.arbiscan.io/address/0xc6C927c77D9BFaFb7b9e003db6D96F3605ba2514) |
-| OP Sepolia | [`0xd8EcF5D6D77bF2852c5e9313F87f31cc99c38dE9`](https://sepolia-optimism.etherscan.io/address/0xd8EcF5D6D77bF2852c5e9313F87f31cc99c38dE9) |
+| Base Sepolia | [`0x99346FAbefdA21E17E49DEAC0e25a49c2B0cB084`](https://sepolia.basescan.org/address/0x99346FAbefdA21E17E49DEAC0e25a49c2B0cB084) |
+| Arb Sepolia | [`0xE8163650f9e5bdAcd1e449f2fB70a5677bbA62ED`](https://sepolia.arbiscan.io/address/0xE8163650f9e5bdAcd1e449f2fB70a5677bbA62ED) |
+| OP Sepolia | [`0xecB93f03515DE67EA43272797Ea8eDa059985894`](https://sepolia-optimism.etherscan.io/address/0xecB93f03515DE67EA43272797Ea8eDa059985894) |
 
 ---
 
@@ -193,7 +193,56 @@ function getSourceDiversityScore() public view returns (uint256 diversityBps)
 // Source health: (activeSources / configuredSources) * 10000 — 10000 = perfect coverage
 ```
 
-**Deployed (v2):** [`0x47e08484BECbf33c8d25036cc4F46b2CD7799232`](https://eth-sepolia.blockscout.com/address/0x47e08484BECbf33c8d25036cc4F46b2CD7799232) (Sepolia)
+**Deployed (v2):** [`0x7fd1C580A83E85b3b16d9e9A3Cd0385cC9759Eeb`](https://eth-sepolia.blockscout.com/address/0x7fd1C580A83E85b3b16d9e9A3Cd0385cC9759Eeb) (Sepolia)
+
+---
+
+### [`DeBORAIInsight.sol`](src/DeBORAIInsight.sol) — AI Risk Metadata Oracle
+
+Stores structured AI-generated risk assessments on-chain. Receives LLM analysis results from the CRE workflow (Handler 7, `action="analyze"`) and makes them available to any consuming protocol.
+
+**Chainlink integration:**
+- Inherits [`ReceiverTemplate.sol`](src/ReceiverTemplate.sol) — receives DON-signed AI insight reports from CRE
+- `_processReport(report)` decodes `(uint8 riskLevel, uint8 riskScore, bool anomalyDetected, uint8 rateDirection, uint8 spreadHealth, string explanation)`
+
+**Storage:**
+- `riskLevel`: LOW (0) / MEDIUM (1) / HIGH (2) / CRITICAL (3)
+- `riskScore`: 0-100 composite score
+- `anomalyDetected`: boolean anomaly flag
+- `rateDirection`: RISING (0) / FALLING (1) / STABLE (2)
+- `spreadHealth`: NORMAL (0) / COMPRESSED (1) / INVERTED (2)
+- `explanation`: free-text reason from LLM
+- `analyzedAt`: timestamp of last analysis
+
+**Read functions:**
+```solidity
+function getInsight() external view returns (
+    uint8 riskLevel, uint8 riskScore, bool anomalyDetected,
+    uint8 rateDirection, uint8 spreadHealth, string memory explanation, uint256 analyzedAt
+)
+function getRiskLevel() external view returns (uint8)
+function getRiskScore() external view returns (uint8)
+function isAnomalyDetected() external view returns (bool)
+```
+
+**Deployed:** [`0xB0BEA2Ad32b41CF12bf600c4FfA5B5E569280a32`](https://sepolia.etherscan.io/address/0xB0BEA2Ad32b41CF12bf600c4FfA5B5E569280a32) (Sepolia)
+
+---
+
+### [`DeBORPaymentGate.sol`](src/DeBORPaymentGate.sol) — Credit-Gated API Access
+
+Payment gate contract for metered access to premium DeBOR API endpoints. Users purchase credits with ETH and consume them per API call.
+
+**Functions:**
+```solidity
+function purchaseCredits() external payable                    // Buy credits with ETH
+function getBalance(address user) external view returns (uint256)  // Check credit balance
+function consumeCredit(address user) external                  // Deduct 1 credit (called by authorized consumers)
+function setMinCredits(uint256 min) external                   // Admin: set minimum credit purchase
+function withdraw() external                                    // Admin: withdraw collected ETH
+```
+
+**Deployed:** [`0xFE3451ACB77228a022312cDB949c1f53E900c743`](https://sepolia.etherscan.io/address/0xFE3451ACB77228a022312cDB949c1f53E900c743) (Sepolia)
 
 ---
 
@@ -205,7 +254,7 @@ Base contract for receiving Chainlink CRE signed reports. Validates that the cal
 - `onReport(metadata, report)` — external entry point called by CRE Forwarder
 - Validates `msg.sender == forwarderAddress` (set in constructor)
 - Calls `_processReport(report)` — virtual function overridden by child contracts
-- Used by: DeBOROracle, DeBORSwap
+- Used by: DeBOROracle, DeBORSwap, DeBORAIInsight
 
 ---
 
@@ -229,14 +278,15 @@ remappings = [
 
 ## Tests
 
-80 tests across 4 test files:
+105 tests across 6 test files:
 
 | Test File | Count | What it covers |
 |-----------|-------|----------------|
-| [`test/DeBOROracle.t.sol`](test/DeBOROracle.t.sol) | 16 | Report processing, ring buffer, historical reads, access control, 8-field benchmark, source tracking |
-| [`test/DeBORCCIP.t.sol`](test/DeBORCCIP.t.sol) | 21 | CCIP send/receive, fee calculation, source validation, multi-destination (3 L2s), OP Sepolia |
+| [`test/DeBOROracle.t.sol`](test/DeBOROracle.t.sol) | 20 | Report processing, ring buffer, historical reads, access control, 8-field benchmark, source tracking, circuit breaker, risk metadata |
+| [`test/DeBORCCIP.t.sol`](test/DeBORCCIP.t.sol) | 25 | CCIP send/receive, fee calculation, source validation, multi-destination (3 L2s), OP Sepolia, benchmark relay |
 | [`test/DeBORSwap.t.sol`](test/DeBORSwap.t.sol) | 41 | Swap lifecycle (create/join/settle/close/cancel/liquidate), ERC-721 mint/burn/transfer, CRE batch actions, margin calculations, on-chain metadata, PnL |
-| [`test/Counter.t.sol`](test/Counter.t.sol) | 2 | Foundry template sanity checks |
+| [`test/DeBORAIInsight.t.sol`](test/DeBORAIInsight.t.sol) | 7 | AI insight storage, risk level updates, anomaly flags, CRE report processing, access control |
+| [`test/DeBORPaymentGate.t.sol`](test/DeBORPaymentGate.t.sol) | 12 | Credit purchase, balance tracking, credit consumption, access gating, admin controls, refunds |
 
 ```bash
 # Run all tests
@@ -290,36 +340,36 @@ forge script script/DeploySwap.s.sol:DeploySwap \
 RPC="https://sepolia.infura.io/v3/YOUR_KEY"
 
 # Current DeBOR-USDC borrow rate (bps)
-cast call 0x80Be9b18DCb40E216682aA8972b64F93a4716FE6 "getRate()(uint256)" --rpc-url $RPC
+cast call 0x582cd24653ddB50bC23383457b2493487F1E4e68 "getRate()(uint256)" --rpc-url $RPC
 
 # Full benchmark (rate, supply, spread, vol, term7d, timestamp, sources, configured)
-cast call 0x80Be9b18DCb40E216682aA8972b64F93a4716FE6 \
+cast call 0x582cd24653ddB50bC23383457b2493487F1E4e68 \
   "getFullBenchmark()(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)" --rpc-url $RPC
 
 # Historical rate (5 periods back)
-cast call 0x80Be9b18DCb40E216682aA8972b64F93a4716FE6 \
+cast call 0x582cd24653ddB50bC23383457b2493487F1E4e68 \
   "getHistoricalRate(uint256)(uint256)" 5 --rpc-url $RPC
 
 # Swap count
-cast call 0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291 "getSwapCount()(uint256)" --rpc-url $RPC
+cast call 0x21f2B4D2972045031c88F2e6D3430dD8646a5497 "getSwapCount()(uint256)" --rpc-url $RPC
 
 # Unrealized PnL for swap #0
-cast call 0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291 \
+cast call 0x21f2B4D2972045031c88F2e6D3430dD8646a5497 \
   "getUnrealizedPnL(uint256)(int256,int256)" 0 --rpc-url $RPC
 
 # CCIP receiver rate on Base Sepolia
-cast call 0xf11b0c2c3C23eeBa32AB9a5340C767ccB152fA57 "getRate()(uint256)" \
+cast call 0x99346FAbefdA21E17E49DEAC0e25a49c2B0cB084 "getRate()(uint256)" \
   --rpc-url https://base-sepolia.infura.io/v3/YOUR_KEY
 
 # AdaptiveLending v2 — risk score (0-100)
-cast call 0x47e08484BECbf33c8d25036cc4F46b2CD7799232 "getRiskScore()(uint256)" --rpc-url $RPC
+cast call 0x7fd1C580A83E85b3b16d9e9A3Cd0385cC9759Eeb "getRiskScore()(uint256)" --rpc-url $RPC
 
 # AdaptiveLending v2 — stress test PnL (rate shock of +200bps on 1 ETH notional at 350bps fixed)
-cast call 0x47e08484BECbf33c8d25036cc4F46b2CD7799232 \
+cast call 0x7fd1C580A83E85b3b16d9e9A3Cd0385cC9759Eeb \
   "getStressTestPnL(uint256,uint256,int256)(int256)" 350 1000000000000000000 200 --rpc-url $RPC
 
 # AdaptiveLending v2 — source diversity (10000 = 100% sources active)
-cast call 0x47e08484BECbf33c8d25036cc4F46b2CD7799232 "getSourceDiversityScore()(uint256)" --rpc-url $RPC
+cast call 0x7fd1C580A83E85b3b16d9e9A3Cd0385cC9759Eeb "getSourceDiversityScore()(uint256)" --rpc-url $RPC
 ```
 
 ---
@@ -338,11 +388,13 @@ cast call 0x47e08484BECbf33c8d25036cc4F46b2CD7799232 "getSourceDiversityScore()(
               v                    NFT Holders
         DeBORConsumer v2         (ownerOf settlement)
        (AdaptiveLending +
-        riskScore, stressPnL,
-        diversityScore)
+        riskScore, stressPnL,        DeBORAIInsight
+        diversityScore)             (AI risk metadata)
               |
-              v
-       DeBORCCIPSender ---- CCIP ----+--> DeBORCCIPReceiver (Base Sepolia)
-                                     +--> DeBORCCIPReceiver (Arb Sepolia)
-                                     +--> DeBORCCIPReceiver (OP Sepolia)
+              v                   DeBORPaymentGate
+       DeBORCCIPSender            (credit-gated API)
+              |
+              +---- CCIP ----+--> DeBORCCIPReceiver (Base Sepolia)
+                             +--> DeBORCCIPReceiver (Arb Sepolia)
+                             +--> DeBORCCIPReceiver (OP Sepolia)
 ```

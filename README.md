@@ -2,7 +2,7 @@
 
 > **The SOFR/LIBOR of DeFi.** A transparent, manipulation-resistant benchmark interest rate computed from real on-chain lending data across 9 protocols and 6 chains.
 
-**43 sources | 9 protocols | 6 chains | 5 assets | 12 contracts | 80 tests**
+**43 sources | 9 protocols | 6 chains | 5 assets | 13 contracts | 105 tests**
 
 Built with **Chainlink CRE** for [Convergence: A Chainlink Hackathon](https://chain.link/hackathon) — DeFi & Tokenization Track
 
@@ -26,13 +26,13 @@ DeBOR reads live interest rates from **9 protocols** across **6 mainnet chains**
 
 ```
 DeBOR-USDC                    DeBOR-ETH                     DeBOR-BTC
-Rate:    3.72% (372 bps)      Rate:    2.28% (228 bps)      Rate:    0.82% (82 bps)
-Supply:  2.21% (221 bps)      Supply:  1.54% (154 bps)      Supply:  0.03% (3 bps)
-Spread:  151 bps              Spread:  74 bps               Spread:  79 bps
+Rate:    3.69% (369 bps)      Rate:    2.27% (227 bps)      Rate:    0.82% (82 bps)
+Supply:  2.18% (218 bps)      Supply:  1.52% (152 bps)      Supply:  0.03% (3 bps)
+Spread:  151 bps              Spread:  75 bps               Spread:  79 bps
 Sources: 14/14                Sources: 10/10                Sources: 5/5
 
 DeBOR-DAI                     DeBOR-USDT
-Rate:    4.03% (403 bps)      Rate:    3.75% (375 bps)
+Rate:    4.19% (419 bps)      Rate:    3.79% (379 bps)
 Sources: 8/8                  Sources: 6/6
 ```
 
@@ -41,6 +41,8 @@ On top of the benchmark oracle, DeBOR includes:
 - **Interest Rate Swap Protocol** — The first DeFi IRS. Pay fixed, receive DeBOR floating. ERC-721 tokenized positions. CRE autonomously settles daily, monitors margins hourly, and detects rate spikes.
 - **Cross-Chain Oracle via CCIP** — Benchmark data relayed from Sepolia to Base Sepolia, Arbitrum Sepolia, and Optimism Sepolia.
 - **Adaptive Lending Consumer (v2)** — Demo contract that adjusts borrow rates and collateral ratios in real time based on DeBOR. Includes risk scoring, stress-test PnL estimation, and source diversity scoring.
+- **AI Risk Metadata Oracle** — On-chain storage for LLM-generated risk assessments. CRE writes structured insights (risk level, score, anomaly flags, rate direction) to DeBORAIInsight contract.
+- **Credit-Gated API Access** — DeBORPaymentGate contract for metered access to premium endpoints. Users purchase credits with ETH.
 - **Risk & Compliance Engine** — On-demand VaR/CVaR, HHI concentration index, Basel IRRBB stress tests, and composite risk scoring.
 - **AI Market Intelligence** — LLM-powered risk assessment via Groq API (llama-3.3-70b). Reads all oracle benchmarks + SOFR, returns structured risk classification.
 
@@ -99,7 +101,7 @@ USDC has 14 sources needing 22+ EVM calls, exceeding the CRE 15-call limit. Solv
 
 ```
 Trigger 0 (USDC Core)  :00/:30 → reads first 10 sources (15 calls) → writes to oracle
-Trigger 9 (USDC Ext)   :02/:32 → reads remaining 4 sources (10 calls)
+Trigger 8 (USDC Ext)   :02/:32 → reads remaining 4 sources (10 calls)
                                 → reads oracle's current state via getFullBenchmark() (1 call)
                                 → merges core + ext using source-count weighting
                                 → writes combined 14/14 benchmark to oracle
@@ -131,23 +133,25 @@ DeBOR Oracle (Sepolia) → DeBORCCIPSender → Chainlink CCIP → Base Sepolia R
 
 | Contract | Address | Verified |
 |----------|---------|----------|
-| DeBOR-USDC Oracle | [`0x80Be9b18DCb40E216682aA8972b64F93a4716FE6`](https://sepolia.etherscan.io/address/0x80Be9b18DCb40E216682aA8972b64F93a4716FE6) | Yes |
-| DeBOR-ETH Oracle | [`0x8D7EBA5Ef17D69b234746fdbB9722EC52135B9A8`](https://sepolia.etherscan.io/address/0x8D7EBA5Ef17D69b234746fdbB9722EC52135B9A8) | Yes |
-| DeBOR-BTC Oracle | [`0x1Ee00d2bd54C6200905BB4746bFDFB3eB4Be24fD`](https://sepolia.etherscan.io/address/0x1Ee00d2bd54C6200905BB4746bFDFB3eB4Be24fD) | Yes |
-| DeBOR-DAI Oracle | [`0xdF989f502Ba3d9664c4a8B7bA675a0F34990b608`](https://sepolia.etherscan.io/address/0xdF989f502Ba3d9664c4a8B7bA675a0F34990b608) | Yes |
-| DeBOR-USDT Oracle | [`0x2F565693410D51Be42c664B566F244EDe7Be772c`](https://sepolia.etherscan.io/address/0x2F565693410D51Be42c664B566F244EDe7Be772c) | Yes |
-| DeBORSwap (ERC-721 IRS) | [`0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291`](https://sepolia.etherscan.io/address/0x114b52B58C8DAebe4972D3D9bC3659Ef66f8D291) | Yes |
-| DeBORCCIPSender | [`0xE99c38245EA789E9102Dc23EE28FAd3ed67d2432`](https://sepolia.etherscan.io/address/0xE99c38245EA789E9102Dc23EE28FAd3ed67d2432) | Yes |
-| AdaptiveLending (v2) | [`0x47e08484BECbf33c8d25036cc4F46b2CD7799232`](https://eth-sepolia.blockscout.com/address/0x47e08484BECbf33c8d25036cc4F46b2CD7799232) | Yes |
+| DeBOR-USDC Oracle | [`0x582cd24653ddB50bC23383457b2493487F1E4e68`](https://sepolia.etherscan.io/address/0x582cd24653ddB50bC23383457b2493487F1E4e68) | Yes |
+| DeBOR-ETH Oracle | [`0x846D1d2424BBe8C16E9Ac5e59a2915298cFecFeA`](https://sepolia.etherscan.io/address/0x846D1d2424BBe8C16E9Ac5e59a2915298cFecFeA) | Yes |
+| DeBOR-BTC Oracle | [`0xB2e0D3663Ae773e8D8EF7186a29FfFb07209fa24`](https://sepolia.etherscan.io/address/0xB2e0D3663Ae773e8D8EF7186a29FfFb07209fa24) | Yes |
+| DeBOR-DAI Oracle | [`0xA1ccf4604c0ee3c43e44914a82d27935f8E3a2E0`](https://sepolia.etherscan.io/address/0xA1ccf4604c0ee3c43e44914a82d27935f8E3a2E0) | Yes |
+| DeBOR-USDT Oracle | [`0x2A43a60233435F990b327AD06c6Da06eB36dBBaF`](https://sepolia.etherscan.io/address/0x2A43a60233435F990b327AD06c6Da06eB36dBBaF) | Yes |
+| DeBORSwap (ERC-721 IRS) | [`0x21f2B4D2972045031c88F2e6D3430dD8646a5497`](https://sepolia.etherscan.io/address/0x21f2B4D2972045031c88F2e6D3430dD8646a5497) | Yes |
+| DeBORCCIPSender | [`0xb09A5F2B70dAD8fbBe03C23e80883c9900Add3F0`](https://sepolia.etherscan.io/address/0xb09A5F2B70dAD8fbBe03C23e80883c9900Add3F0) | Yes |
+| AdaptiveLending (v2) | [`0x7fd1C580A83E85b3b16d9e9A3Cd0385cC9759Eeb`](https://eth-sepolia.blockscout.com/address/0x7fd1C580A83E85b3b16d9e9A3Cd0385cC9759Eeb) | Yes |
+| DeBORAIInsight | [`0xB0BEA2Ad32b41CF12bf600c4FfA5B5E569280a32`](https://sepolia.etherscan.io/address/0xB0BEA2Ad32b41CF12bf600c4FfA5B5E569280a32) | Yes |
+| DeBORPaymentGate | [`0xFE3451ACB77228a022312cDB949c1f53E900c743`](https://sepolia.etherscan.io/address/0xFE3451ACB77228a022312cDB949c1f53E900c743) | Yes |
 | CRE Forwarder | [`0x15fC6ae953E024d975e77382eEeC56A9101f9F88`](https://sepolia.etherscan.io/address/0x15fC6ae953E024d975e77382eEeC56A9101f9F88) | -- |
 
 ### Cross-Chain Receivers (CCIP)
 
 | Chain | Contract | Address |
 |-------|----------|---------|
-| Base Sepolia | DeBORCCIPReceiver | [`0xf11b0c2c3C23eeBa32AB9a5340C767ccB152fA57`](https://sepolia.basescan.org/address/0xf11b0c2c3C23eeBa32AB9a5340C767ccB152fA57) |
-| Arbitrum Sepolia | DeBORCCIPReceiver | [`0xc6C927c77D9BFaFb7b9e003db6D96F3605ba2514`](https://sepolia.arbiscan.io/address/0xc6C927c77D9BFaFb7b9e003db6D96F3605ba2514) |
-| Optimism Sepolia | DeBORCCIPReceiver | [`0xd8EcF5D6D77bF2852c5e9313F87f31cc99c38dE9`](https://sepolia-optimism.etherscan.io/address/0xd8EcF5D6D77bF2852c5e9313F87f31cc99c38dE9) |
+| Base Sepolia | DeBORCCIPReceiver | [`0x99346FAbefdA21E17E49DEAC0e25a49c2B0cB084`](https://sepolia.basescan.org/address/0x99346FAbefdA21E17E49DEAC0e25a49c2B0cB084) |
+| Arbitrum Sepolia | DeBORCCIPReceiver | [`0xE8163650f9e5bdAcd1e449f2fB70a5677bbA62ED`](https://sepolia.arbiscan.io/address/0xE8163650f9e5bdAcd1e449f2fB70a5677bbA62ED) |
+| Optimism Sepolia | DeBORCCIPReceiver | [`0xecB93f03515DE67EA43272797Ea8eDa059985894`](https://sepolia-optimism.etherscan.io/address/0xecB93f03515DE67EA43272797Ea8eDa059985894) |
 
 ---
 
@@ -204,6 +208,7 @@ Every file that uses Chainlink technology:
 | [`ReceiverTemplate.sol`](contract/src/ReceiverTemplate.sol) | CRE forwarder validation (onReport → _processReport) |
 | [`DeBOROracle.sol`](contract/src/DeBOROracle.sol) | Inherits ReceiverTemplate — receives DON-signed benchmark reports |
 | [`DeBORSwap.sol`](contract/src/DeBORSwap.sol) | Inherits ReceiverTemplate — receives CRE swap settlement/liquidation actions |
+| [`DeBORAIInsight.sol`](contract/src/DeBORAIInsight.sol) | Inherits ReceiverTemplate — receives DON-signed AI risk metadata |
 
 ### Chainlink Data Feeds
 
@@ -344,8 +349,10 @@ DeBOR/
 │   │   ├── DeBORCCIPSender.sol     # CCIP cross-chain relay (3 destinations)
 │   │   ├── DeBORCCIPReceiver.sol   # CCIP receiver (Base + Arb + OP Sepolia)
 │   │   ├── DeBORConsumer.sol       # AdaptiveLending demo consumer
+│   │   ├── DeBORAIInsight.sol      # AI-powered risk metadata oracle
+│   │   ├── DeBORPaymentGate.sol    # Credit-gated API access control
 │   │   └── ReceiverTemplate.sol    # CRE forwarder validation base
-│   ├── test/                       # 80 tests (16 Oracle + 21 CCIP + 41 Swap + 2 Counter)
+│   ├── test/                       # 105 tests (20 Oracle + 25 CCIP + 41 Swap + 7 AIInsight + 12 PaymentGate)
 │   └── script/                     # Deployment scripts
 ├── RUN.md                          # How to broadcast real rates to Sepolia
 ├── CRE_UTILIZE.md                  # CRE SDK utilization report (100% coverage)
@@ -411,20 +418,20 @@ cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 9 \
 
 ```bash
 # Read full benchmark (rate, supply, spread, vol, term7d, timestamp, sources, configured)
-cast call 0x80Be9b18DCb40E216682aA8972b64F93a4716FE6 \
+cast call 0x582cd24653ddB50bC23383457b2493487F1E4e68 \
   "getFullBenchmark()(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)" \
   --rpc-url https://sepolia.infura.io/v3/<YOUR_KEY>
 
 # Read individual metrics
-cast call 0x80Be9b18DCb40E216682aA8972b64F93a4716FE6 "getRate()(uint256)" --rpc-url <RPC>
-cast call 0x80Be9b18DCb40E216682aA8972b64F93a4716FE6 "numSources()(uint256)" --rpc-url <RPC>
+cast call 0x582cd24653ddB50bC23383457b2493487F1E4e68 "getRate()(uint256)" --rpc-url <RPC>
+cast call 0x582cd24653ddB50bC23383457b2493487F1E4e68 "numSources()(uint256)" --rpc-url <RPC>
 ```
 
 ### Run Tests
 
 ```bash
 cd contract && forge test -vvv
-# 80 tests passing (16 Oracle + 21 CCIP + 41 Swap + 2 Counter)
+# 105 tests passing (20 Oracle + 25 CCIP + 41 Swap + 7 AIInsight + 12 PaymentGate)
 ```
 
 ### Broadcast Real Rates to Sepolia
@@ -441,6 +448,16 @@ cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interacti
 cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 3 --broadcast   # DAI
 cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 4 --broadcast   # USDT
 cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 8 --broadcast   # USDC ext (14/14)
+
+# Broadcast HTTP actions (on-demand analysis)
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 7 --broadcast \
+  --http-payload '{"action":"risk"}'                                    # Risk analysis (VaR/CVaR/HHI/Basel)
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 7 --broadcast \
+  --http-payload '{"action":"analyze"}'                                 # AI insight → DeBORAIInsight contract
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 7 --broadcast \
+  --http-payload '{"action":"validate"}'                                # Validation + SOFR cross-ref
+cre workflow simulate ./DeBOR-Workflow --target staging-settings --non-interactive --trigger-index 7 --broadcast \
+  --http-payload '{"action":"compare"}'                                 # SOFR/EFFR comparison
 ```
 
 Without `--broadcast`, `writeReport` returns a mock tx hash (`0x000...`). With `--broadcast`, real transactions are submitted to Sepolia. All `callContract` reads are always real mainnet data regardless.
@@ -485,14 +502,14 @@ Without `--broadcast`, `writeReport` returns a mock tx hash (`0x000...`). With `
 | Chains Read | 6 (Ethereum, Base, Arbitrum, Optimism, Avalanche, Polygon) |
 | Chains Written | 4 (Sepolia, Base Sepolia, Arb Sepolia, OP Sepolia) |
 | Asset Benchmarks | 5 (USDC, ETH, BTC, DAI, USDT) |
-| Smart Contracts | 12 deployed + verified |
+| Smart Contracts | 13 deployed + verified |
 | CRE Handlers | 10 (6 benchmark + 1 swap lifecycle + 1 pre-flight + 1 HTTP + 1 EVM Log) |
 | HTTP Actions | 5 (asset refresh, validate, compare, risk analysis, AI intelligence) |
 | External APIs | 3 (DeFiLlama TVL, NY Fed SOFR/EFFR, Groq LLM) |
 | CRE Capabilities | 30+ |
 | Trigger Types | 3 (Cron + HTTP + EVM Log) |
 | Consensus Strategies | 9 (4 top-level + 5 field-level) |
-| Tests | 80 |
+| Tests | 105 |
 
 ---
 
