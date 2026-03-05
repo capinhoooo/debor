@@ -331,7 +331,7 @@ ABI definitions for all on-chain interactions:
 - 8 DAI sources (Aave x5, Spark x1, Moonwell x1, Benqi x1)
 - 6 USDT sources (Aave x5, Moonwell x1)
 - Target: Sepolia (`ethereum-testnet-sepolia`)
-- Swap contract: `0x21f2B4D2972045031c88F2e6D3430dD8646a5497`
+- Swap contract: `0x4bB75f3863B885300DB9e87f9E8DC4d71d94B5aB`
 
 ### [`workflow.yaml`](workflow.yaml) — CRE Workflow Settings
 
