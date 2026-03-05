@@ -21,6 +21,8 @@ abstract contract ReceiverTemplate is IReceiver, Ownable {
     error WorkflowNameRequiresAuthorValidation();
 
     event ForwarderAddressUpdated(address indexed previousForwarder, address indexed newForwarder);
+    event ExpectedAuthorUpdated(address indexed previousAuthor, address indexed newAuthor);
+    event ExpectedWorkflowIdUpdated(bytes32 indexed previousId, bytes32 indexed newId);
 
     constructor(address _forwarderAddress) Ownable(msg.sender) {
         if (_forwarderAddress == address(0)) {
@@ -68,11 +70,15 @@ abstract contract ReceiverTemplate is IReceiver, Ownable {
     }
 
     function setExpectedAuthor(address _author) external onlyOwner {
+        address prev = s_expectedAuthor;
         s_expectedAuthor = _author;
+        emit ExpectedAuthorUpdated(prev, _author);
     }
 
     function setExpectedWorkflowId(bytes32 _id) external onlyOwner {
+        bytes32 prev = s_expectedWorkflowId;
         s_expectedWorkflowId = _id;
+        emit ExpectedWorkflowIdUpdated(prev, _id);
     }
 
     function _decodeMetadata(bytes memory metadata)
