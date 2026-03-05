@@ -19294,15 +19294,37 @@ TRADFI COMPARISON:
 
 Classify risk level, direction, spread health, and anomaly status.`;
 }
-var LLM_DEFAULTS = {
-  riskLevel: "MEDIUM",
-  riskScore: 50,
-  anomalyDetected: false,
-  rateDirection: "STABLE",
-  spreadHealth: "NORMAL",
-  explanation: "LLM unavailable, returning defaults",
-  analyzedAt: 0
-};
+function computeFallbackAnalysis(snapshots, sofrRateBps) {
+  const primary = snapshots.find((s) => s.asset === "USDC") || snapshots[0];
+  if (!primary) {
+    return { riskLevel: "MEDIUM", riskScore: 50, anomalyDetected: false, rateDirection: "STABLE", spreadHealth: "NORMAL", explanation: "No oracle data for analysis", analyzedAt: 0 };
+  }
+  const rateDirection = primary.rate > primary.term7d + 15 ? "RISING" : primary.rate < primary.term7d - 15 ? "FALLING" : "STABLE";
+  const avgSpread = snapshots.reduce((s, b) => s + b.spread, 0) / snapshots.length;
+  const spreadHealth = avgSpread > 300 ? "INVERTED" : avgSpread > 150 ? "COMPRESSED" : "NORMAL";
+  const avgVol = snapshots.reduce((s, b) => s + b.vol, 0) / snapshots.length;
+  const volScore = Math.min(avgVol / 500000, 40);
+  const stables = snapshots.filter((s) => ["USDC", "DAI", "USDT"].includes(s.asset));
+  const avgStableRate = stables.length > 0 ? stables.reduce((s, b) => s + b.rate, 0) / stables.length : 0;
+  const premiumBps = Math.abs(avgStableRate - sofrRateBps);
+  const premiumScore = Math.min(premiumBps / 10, 30);
+  const totalSources = snapshots.reduce((s, b) => s + b.sources, 0);
+  const totalConfigured = snapshots.reduce((s, b) => s + b.configured, 0);
+  const sourceRatio = totalConfigured > 0 ? totalSources / totalConfigured : 1;
+  const sourceScore = (1 - sourceRatio) * 30;
+  const riskScore = Math.round(Math.min(volScore + premiumScore + sourceScore, 100));
+  const riskLevel = riskScore <= 25 ? "LOW" : riskScore <= 50 ? "MEDIUM" : riskScore <= 75 ? "HIGH" : "CRITICAL";
+  const anomalyDetected = riskScore > 75 || avgVol > 50000000;
+  const parts = [];
+  if (rateDirection !== "STABLE")
+    parts.push(`rates ${rateDirection.toLowerCase()}`);
+  if (spreadHealth !== "NORMAL")
+    parts.push(`spreads ${spreadHealth.toLowerCase()}`);
+  if (premiumBps > 50)
+    parts.push(`DeFi premium ${premiumBps}bps`);
+  const explanation = parts.length > 0 ? `Rule-based: ${parts.join(", ")}` : `Rule-based: stable market, vol=${Math.round(avgVol)}`;
+  return { riskLevel, riskScore, anomalyDetected, rateDirection, spreadHealth, explanation, analyzedAt: 0 };
+}
 function runAIAnalysis(runtime2) {
   runtime2.log("=== DeBOR AI Market Intelligence ===");
   runtime2.log("Step 1: Reading oracle benchmarks...");
@@ -19327,9 +19349,9 @@ function runAIAnalysis(runtime2) {
   runtime2.log("Step 4: Calling LLM via HTTPClient...");
   const model = runtime2.config.groqApiModel || DEFAULT_GROQ_MODEL;
   const apiKey = runtime2.config.groqApiKey || "";
-  let result = { ...LLM_DEFAULTS };
-  if (!apiKey) {
-    runtime2.log("  GROQ_API_KEY not configured — returning defaults");
+  let result = computeFallbackAnalysis(snapshots, sofrRateBps);
+  if (!apiKey || apiKey === "YOUR_GROQ_API_KEY") {
+    runtime2.log("  GROQ_API_KEY not configured — using rule-based analysis");
   } else {
     try {
       const requestBody = JSON.stringify({
@@ -19371,10 +19393,12 @@ function runAIAnalysis(runtime2) {
           runtime2.log("  LLM returned no content");
         }
       } else {
-        runtime2.log(`  LLM call returned status ${response.statusCode}`);
+        runtime2.log(`  LLM call returned status ${response.statusCode} — using rule-based analysis`);
+        result = computeFallbackAnalysis(snapshots, sofrRateBps);
       }
     } catch (e) {
-      runtime2.log(`  LLM call failed: ${e}`);
+      runtime2.log(`  LLM call failed: ${e} — using rule-based analysis`);
+      result = computeFallbackAnalysis(snapshots, sofrRateBps);
     }
   }
   runtime2.log(`  Risk Level: ${result.riskLevel} (${result.riskScore}/100)`);
@@ -19392,6 +19416,10 @@ function runAIAnalysis(runtime2) {
   runtime2.log(`=== AI Analysis Complete: ${result.riskLevel} (${result.riskScore}/100) | ${result.rateDirection} | ${result.spreadHealth} ===`);
   return safeJsonStringify(analysis);
 }
+var REPORT_TYPE_ALERT = 1;
+var RISK_LEVEL_LOW = 0;
+var RISK_LEVEL_HIGH = 2;
+var RISK_LEVEL_CRITICAL = 3;
 var protocolSchema = exports_external.object({
   protocol: exports_external.string(),
   chain: exports_external.string(),
@@ -19425,7 +19453,10 @@ var configSchema = exports_external.object({
     varCritical: exports_external.number(),
     hhiWarning: exports_external.number(),
     spreadWarning: exports_external.number()
-  }).optional()
+  }).optional(),
+  aiInsightAddress: exports_external.string().optional(),
+  paymentGateAddress: exports_external.string().optional(),
+  paymentMinCredits: exports_external.string().optional()
 });
 function parseTriggerTimestamp(payload) {
   const execTime = payload.scheduledExecutionTime;
@@ -19522,8 +19553,78 @@ function runAssetBenchmark(runtime2, payload, asset) {
       runtime2.log(`  Rate guard: skipped (${e})`);
     }
   }
-  runtime2.log(`Step 4: Generating signed report...`);
   const triggerTimestamp = parseTriggerTimestamp(payload);
+  const thresholds = runtime2.config.riskThresholds;
+  let isCircuitBreaker = false;
+  let riskLevelNum = RISK_LEVEL_LOW;
+  if (thresholds && targetNetwork) {
+    try {
+      const guardClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector);
+      const currentRateResult2 = guardClient.callContract(runtime2, {
+        call: encodeCallMsg({
+          from: zeroAddress,
+          to: oracleAddress,
+          data: encodeFunctionData({
+            abi: DEBOR_ORACLE_READ_ABI,
+            functionName: "getRate"
+          })
+        }),
+        blockNumber: LATEST_BLOCK_NUMBER
+      }).result();
+      const currentRateForRisk = BigInt(decodeFunctionResult({
+        abi: DEBOR_ORACLE_READ_ABI,
+        functionName: "getRate",
+        data: bytesToHex(currentRateResult2.data)
+      }));
+      if (currentRateForRisk > 0n) {
+        const deviation = Number(metrics.deborRate > currentRateForRisk ? metrics.deborRate - currentRateForRisk : currentRateForRisk - metrics.deborRate);
+        if (deviation >= thresholds.varCritical) {
+          riskLevelNum = RISK_LEVEL_CRITICAL;
+          isCircuitBreaker = true;
+          runtime2.log(`  CIRCUIT BREAKER: ${asset} deviation=${deviation}bps >= critical threshold ${thresholds.varCritical}bps`);
+        } else if (deviation >= thresholds.varWarning) {
+          riskLevelNum = RISK_LEVEL_HIGH;
+          runtime2.log(`  RISK WARNING: ${asset} deviation=${deviation}bps >= warning threshold ${thresholds.varWarning}bps`);
+        }
+      }
+    } catch (e) {
+      runtime2.log(`  Risk gate: skipped (${e})`);
+    }
+  }
+  if (isCircuitBreaker) {
+    runtime2.log(`Step 4: Generating ALERT report (circuit breaker)...`);
+    const alertData = encodeAbiParameters(parseAbiParameters("uint8, uint256, uint256, uint256, uint256"), [
+      REPORT_TYPE_ALERT,
+      metrics.deborRate,
+      riskLevelNum,
+      BigInt(Number(metrics.deborRate > 0n ? metrics.deborRate : 0n)),
+      triggerTimestamp
+    ]);
+    const alertReport = runtime2.report(prepareReportRequest(alertData)).result();
+    runtime2.log(`Step 5: Writing ALERT to ${asset} oracle on Sepolia...`);
+    const writeNetwork2 = getNetwork({
+      chainFamily: "evm",
+      chainSelectorName: runtime2.config.targetChainSelectorName,
+      isTestnet: true
+    });
+    if (!writeNetwork2)
+      throw new Error("Target network not found");
+    const alertEvmClient = new cre.capabilities.EVMClient(writeNetwork2.chainSelector.selector);
+    const alertResult = alertEvmClient.writeReport(runtime2, {
+      receiver: oracleAddress,
+      report: alertReport,
+      gasConfig: { gasLimit: runtime2.config.gasLimit }
+    }).result();
+    if (alertResult.txStatus !== TxStatus.SUCCESS) {
+      runtime2.log(`  Alert write failed: ${alertResult.errorMessage || alertResult.txStatus}`);
+      return `${asset}: ALERT WRITE FAILED`;
+    }
+    const alertTxHash = alertResult.txHash || new Uint8Array(32);
+    runtime2.log(`  Alert TX: ${bytesToHex(alertTxHash)}`);
+    runtime2.log(`=== ${asset} CIRCUIT BREAKER ACTIVATED (risk=${riskLevelNum}) ===`);
+    return `${asset}: CIRCUIT_BREAKER (risk=${riskLevelNum}, rate=${metrics.deborRate}bps)`;
+  }
+  runtime2.log(`Step 4: Generating signed report...`);
   const reportData = encodeAbiParameters(parseAbiParameters("uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256"), [
     metrics.deborRate,
     metrics.deborSupply,
@@ -19666,6 +19767,42 @@ var onUsdcExtTrigger = (runtime2, payload) => {
   runtime2.log(`=== DeBOR USDC Extended Merge Complete: ${totalSources}/${allUsdcProtocols.length} sources ===`);
   return `USDC_EXT: MERGED OK (${totalSources}/${allUsdcProtocols.length} sources, ${mergedRate}bps)`;
 };
+var verifyPaymentGate = (runtime2, payer) => {
+  const gateAddr = runtime2.config.paymentGateAddress;
+  if (!gateAddr || !payer)
+    return true;
+  try {
+    const targetNetwork = getNetwork({
+      chainFamily: "evm",
+      chainSelectorName: runtime2.config.targetChainSelectorName,
+      isTestnet: true
+    });
+    if (!targetNetwork)
+      return true;
+    const gateClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector);
+    const creditCalldata = encodeFunctionData({
+      abi: [{ inputs: [{ name: "consumer", type: "address" }], name: "getCredits", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" }],
+      functionName: "getCredits",
+      args: [payer]
+    });
+    const creditResult = gateClient.callContract(runtime2, {
+      toAddress: gateAddr,
+      data: bytesToHex(Buffer.from(creditCalldata.slice(2), "hex")),
+      blockNumber: LATEST_BLOCK_NUMBER
+    }).result();
+    const creditBalance = decodeFunctionResult({
+      abi: [{ inputs: [{ name: "consumer", type: "address" }], name: "getCredits", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" }],
+      functionName: "getCredits",
+      data: `0x${creditResult.data}`
+    });
+    const minCredits = BigInt(runtime2.config.paymentMinCredits || "1");
+    runtime2.log(`  x402 gate: ${payer} has ${creditBalance} credits (min: ${minCredits})`);
+    return creditBalance >= minCredits;
+  } catch (e) {
+    runtime2.log(`  x402 gate check error: ${e}`);
+    return true;
+  }
+};
 var onHttpTrigger = (runtime2, payload) => {
   runtime2.log("=== DeBOR On-Demand (HTTP Trigger) ===");
   let asset = "ALL";
@@ -19680,10 +19817,95 @@ var onHttpTrigger = (runtime2, payload) => {
       return runSOFRComparison(runtime2);
     }
     if (request.action === "risk") {
+      if (!verifyPaymentGate(runtime2, request.payer)) {
+        return JSON.stringify({ error: "PAYMENT_REQUIRED", message: "Insufficient credits. Purchase credits via DeBORPaymentGate contract.", action: "risk" });
+      }
       return runRiskAnalysis(runtime2);
     }
     if (request.action === "analyze") {
-      return runAIAnalysis(runtime2);
+      if (!verifyPaymentGate(runtime2, request.payer)) {
+        return JSON.stringify({ error: "PAYMENT_REQUIRED", message: "Insufficient credits. Purchase credits via DeBORPaymentGate contract.", action: "analyze" });
+      }
+      const aiResultJson = runAIAnalysis(runtime2);
+      const aiResult = JSON.parse(aiResultJson);
+      const aiInsightAddr = runtime2.config.aiInsightAddress;
+      runtime2.log(`  AI write target: ${aiInsightAddr || "none"}`);
+      if (aiInsightAddr) {
+        runtime2.log(`  Encoding AI verdict for on-chain write...`);
+        try {
+          const RISK_LEVEL_MAP = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
+          const DIRECTION_MAP = { STABLE: 0, RISING: 1, FALLING: 2 };
+          const SPREAD_MAP = { NORMAL: 0, COMPRESSED: 1, INVERTED: 2 };
+          const REGIME_MAP = { CONVERGED: 0, NORMAL: 1, DIVERGED: 2, DISLOCATED: 3 };
+          const regimeFromRisk = aiResult.riskLevel === "CRITICAL" ? 3 : aiResult.riskLevel === "HIGH" ? 2 : aiResult.riskLevel === "MEDIUM" ? 1 : 0;
+          const insightData = encodeAbiParameters(parseAbiParameters("uint256, uint256, uint256, uint256, uint256, uint256, uint256"), [
+            BigInt(RISK_LEVEL_MAP[aiResult.riskLevel] ?? 1),
+            BigInt(DIRECTION_MAP[aiResult.rateDirection] ?? 0),
+            BigInt(SPREAD_MAP[aiResult.spreadHealth] ?? 0),
+            BigInt(regimeFromRisk),
+            BigInt(aiResult.riskScore),
+            BigInt(aiResult.anomalyDetected ? 1 : 0),
+            BigInt(Math.floor(Date.now() / 1000))
+          ]);
+          const insightReport = runtime2.report(prepareReportRequest(insightData)).result();
+          const writeNet = getNetwork({
+            chainFamily: "evm",
+            chainSelectorName: runtime2.config.targetChainSelectorName,
+            isTestnet: true
+          });
+          if (writeNet) {
+            const insightClient = new cre.capabilities.EVMClient(writeNet.chainSelector.selector);
+            const writeRes = insightClient.writeReport(runtime2, {
+              receiver: aiInsightAddr,
+              report: insightReport,
+              gasConfig: { gasLimit: runtime2.config.gasLimit }
+            }).result();
+            if (writeRes.txStatus === TxStatus.SUCCESS) {
+              runtime2.log(`  AI verdict written to DeBORAIInsight: ${bytesToHex(writeRes.txHash || new Uint8Array(32))}`);
+            } else {
+              runtime2.log(`  AI insight write failed: ${writeRes.errorMessage || writeRes.txStatus}`);
+            }
+          }
+        } catch (e) {
+          runtime2.log(`  AI insight write error: ${e}`);
+        }
+      }
+      if (aiResult.anomalyDetected && aiResult.riskLevel === "CRITICAL") {
+        runtime2.log("  AI CIRCUIT BREAKER: anomaly detected + CRITICAL risk, activating circuit breakers");
+        const triggerTs = BigInt(Math.floor(Date.now() / 1000));
+        const writeNet = getNetwork({
+          chainFamily: "evm",
+          chainSelectorName: runtime2.config.targetChainSelectorName,
+          isTestnet: true
+        });
+        if (writeNet) {
+          const cbClient = new cre.capabilities.EVMClient(writeNet.chainSelector.selector);
+          for (const cbAsset of ["USDC", "ETH", "BTC", "DAI", "USDT"]) {
+            const cbOracleAddr = runtime2.config.oracleAddresses[cbAsset];
+            if (!cbOracleAddr)
+              continue;
+            try {
+              const alertData = encodeAbiParameters(parseAbiParameters("uint8, uint256, uint256, uint256, uint256"), [
+                REPORT_TYPE_ALERT,
+                BigInt(aiResult.riskScore),
+                BigInt(RISK_LEVEL_CRITICAL),
+                BigInt(aiResult.riskScore),
+                triggerTs
+              ]);
+              const alertReport = runtime2.report(prepareReportRequest(alertData)).result();
+              const alertRes = cbClient.writeReport(runtime2, {
+                receiver: cbOracleAddr,
+                report: alertReport,
+                gasConfig: { gasLimit: runtime2.config.gasLimit }
+              }).result();
+              runtime2.log(`  ${cbAsset} circuit breaker: ${alertRes.txStatus === TxStatus.SUCCESS ? "ACTIVATED" : "FAILED"}`);
+            } catch (e) {
+              runtime2.log(`  ${cbAsset} circuit breaker error: ${e}`);
+            }
+          }
+        }
+      }
+      return aiResultJson;
     }
     if (request.asset && ["USDC", "ETH", "BTC", "DAI", "USDT", "ALL"].includes(request.asset)) {
       asset = request.asset;
