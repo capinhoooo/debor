@@ -14,6 +14,7 @@ interface IDeBOROracle {
         uint256 term7d, uint256 updated, uint256 sources
     );
     function getHistoricalRate(uint256 periodsBack) external view returns (uint256);
+    function circuitBreakerActive() external view returns (bool);
 }
 
 /// @title DeBORSwap - CRE-Native Interest Rate Swap Protocol with ERC-721 Position Tokens
@@ -41,6 +42,10 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
     uint256 public constant SETTLEMENT_INTERVAL = 1 days;
     uint256 public constant MIN_DURATION = 1 days;
     uint256 public constant MAX_DURATION = 365 days;
+
+    // --- Exposure Limits ---
+    uint256 public maxNotionalPerAddress;  // 0 = unlimited
+    mapping(address => uint256) public activeNotional;
 
     enum SwapStatus { Open, Active, Settled, Liquidated }
 
@@ -79,6 +84,8 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
     error SwapExpired(uint256 swapId);
     error SwapNotExpired(uint256 swapId);
     error OracleStale(uint256 lastUpdated);
+    error CircuitBreakerActive();
+    error ExceedsMaxNotional(address party, uint256 current, uint256 additional, uint256 max);
 
     constructor(address _oracle, address _forwarder)
         ReceiverTemplate(_forwarder)
@@ -111,6 +118,11 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
         uint256 requiredMargin = (notional * MARGIN_BPS) / BPS_DENOMINATOR;
         if (msg.value < requiredMargin) revert InsufficientMargin(requiredMargin, msg.value);
 
+        if (maxNotionalPerAddress > 0 && activeNotional[msg.sender] + notional > maxNotionalPerAddress) {
+            revert ExceedsMaxNotional(msg.sender, activeNotional[msg.sender], notional, maxNotionalPerAddress);
+        }
+        activeNotional[msg.sender] += notional;
+
         swapId = swaps.length;
         swaps.push(Swap({
             fixedPayer: msg.sender,
@@ -138,6 +150,11 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
         uint256 requiredMargin = (s.notional * MARGIN_BPS) / BPS_DENOMINATOR;
         if (msg.value < requiredMargin) revert InsufficientMargin(requiredMargin, msg.value);
 
+        if (maxNotionalPerAddress > 0 && activeNotional[msg.sender] + s.notional > maxNotionalPerAddress) {
+            revert ExceedsMaxNotional(msg.sender, activeNotional[msg.sender], s.notional, maxNotionalPerAddress);
+        }
+        activeNotional[msg.sender] += s.notional;
+
         s.floatingPayer = msg.sender;
         s.floatingPayerMargin = msg.value;
         s.startedAt = block.timestamp;
@@ -153,6 +170,7 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
     function settle(uint256 swapId) external {
         Swap storage s = swaps[swapId];
         if (s.status != SwapStatus.Active) revert SwapNotActive(swapId);
+        if (oracle.circuitBreakerActive()) revert CircuitBreakerActive();
 
         uint256 nextSettlement = s.lastSettledAt + SETTLEMENT_INTERVAL;
         if (block.timestamp < nextSettlement) revert SettlementTooEarly(nextSettlement, block.timestamp);
@@ -219,6 +237,8 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
         address floatingOwner = ownerOf(swapId * 2 + 1);
 
         s.status = SwapStatus.Settled;
+        activeNotional[s.fixedPayer] -= s.notional;
+        activeNotional[s.floatingPayer] -= s.notional;
 
         uint256 fixedReturn = s.fixedPayerMargin;
         uint256 floatingReturn = s.floatingPayerMargin;
@@ -246,6 +266,7 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
         if (msg.sender != s.fixedPayer) revert NotSwapParty(swapId);
 
         s.status = SwapStatus.Settled;
+        activeNotional[s.fixedPayer] -= s.notional;
 
         uint256 refund = s.fixedPayerMargin;
         s.fixedPayerMargin = 0;
@@ -303,6 +324,10 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
 
     function setOracle(address _oracle) external onlyOwner {
         oracle = IDeBOROracle(_oracle);
+    }
+
+    function setMaxNotional(uint256 _max) external onlyOwner {
+        maxNotionalPerAddress = _max;
     }
 
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
@@ -420,6 +445,8 @@ contract DeBORSwap is ReceiverTemplate, ERC721 {
         address floatingOwner = ownerOf(swapId * 2 + 1);
 
         s.status = SwapStatus.Liquidated;
+        activeNotional[s.fixedPayer] -= s.notional;
+        activeNotional[s.floatingPayer] -= s.notional;
 
         uint256 fixedReturn = s.fixedPayerMargin;
         uint256 floatingReturn = s.floatingPayerMargin;
