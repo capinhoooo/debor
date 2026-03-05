@@ -28,6 +28,14 @@ contract DeBOROracle is ReceiverTemplate {
     uint256 public lastCircuitBreakerTrip;
     uint8 public riskLevel;             // 0=LOW, 1=MEDIUM, 2=HIGH, 3=CRITICAL
 
+    // --- Rate Bounds ---
+    uint256 public constant MAX_RATE_BPS = 50000;        // 500% APR ceiling
+    uint256 public constant MAX_DEVIATION_BPS = 2000;     // max 20% change per update
+
+    error RateOutOfBounds(uint256 rate, uint256 maxRate);
+    error RateDeviationTooLarge(uint256 newRate, uint256 oldRate, uint256 maxDeviation);
+    error InvalidTWAPWindow(uint256 periods);
+
     // --- Rate History ---
     uint256 public constant MAX_HISTORY = 336;
     uint256[336] public rateHistory;
@@ -91,6 +99,13 @@ contract DeBOROracle is ReceiverTemplate {
             uint256 _sourcesConfigured
         ) = abi.decode(report, (uint8, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256));
 
+        // Rate sanity checks
+        if (_rate > MAX_RATE_BPS) revert RateOutOfBounds(_rate, MAX_RATE_BPS);
+        if (deborRate > 0) {
+            uint256 diff = _rate > deborRate ? _rate - deborRate : deborRate - _rate;
+            if (diff > MAX_DEVIATION_BPS) revert RateDeviationTooLarge(_rate, deborRate, MAX_DEVIATION_BPS);
+        }
+
         deborRate = _rate;
         deborSupply = _supply;
         deborSpread = _spread;
@@ -124,6 +139,13 @@ contract DeBOROracle is ReceiverTemplate {
             uint256 _numSources,
             uint256 _sourcesConfigured
         ) = abi.decode(report, (uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256));
+
+        // Rate sanity checks
+        if (_rate > MAX_RATE_BPS) revert RateOutOfBounds(_rate, MAX_RATE_BPS);
+        if (deborRate > 0) {
+            uint256 diff = _rate > deborRate ? _rate - deborRate : deborRate - _rate;
+            if (diff > MAX_DEVIATION_BPS) revert RateDeviationTooLarge(_rate, deborRate, MAX_DEVIATION_BPS);
+        }
 
         deborRate = _rate;
         deborSupply = _supply;
@@ -202,5 +224,19 @@ contract DeBOROracle is ReceiverTemplate {
         require(periodsBack < MAX_HISTORY && periodsBack < historyIndex, "Out of range");
         uint256 idx = (historyIndex - 1 - periodsBack) % MAX_HISTORY;
         return rateHistory[idx];
+    }
+
+    /// @notice Compute time-weighted average rate from the last `periods` entries
+    /// @param periods Number of historical entries to average (1 to min(historyIndex, MAX_HISTORY))
+    /// @return The average rate in basis points
+    function getTWAP(uint256 periods) external view returns (uint256) {
+        if (periods == 0 || periods > historyIndex || periods > MAX_HISTORY)
+            revert InvalidTWAPWindow(periods);
+        uint256 sum;
+        for (uint256 i = 0; i < periods; i++) {
+            uint256 idx = (historyIndex - 1 - i) % MAX_HISTORY;
+            sum += rateHistory[idx];
+        }
+        return sum / periods;
     }
 }
