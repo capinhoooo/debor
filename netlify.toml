@@ -1,6 +1,6 @@
 [build]
   base = "web"
-  command = "bun install && bun run build"
+  command = "bun install && bun run build 2>&1 || (echo 'BUILD FAILED' && ls -la .output/ 2>/dev/null && exit 1)"
   publish = ".output/public"
 
 [build.environment]
