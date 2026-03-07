@@ -1,7 +1,7 @@
 [build]
   base = "web"
   command = "bun install && NODE_OPTIONS='--no-warnings' bun run build"
-  publish = ".output/public"
+  publish = "dist"
 
 [build.environment]
   NODE_VERSION = "20"
