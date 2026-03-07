@@ -14,11 +14,11 @@ const footerLinks = [
 export default function Footer() {
   return (
     <footer className="mt-auto">
-      <div className="overflow-hidden">
+      <div className="mx-auto max-w-5xl mb-4">
         <img
           src="/debor-brands/debor-stripe.png"
           alt=""
-          className="h-8 w-full object-cover mb-4"
+          className="w-full"
           draggable={false}
         />
       </div>
