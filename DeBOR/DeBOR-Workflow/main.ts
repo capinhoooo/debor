@@ -520,12 +520,13 @@ const onUsdcExtTrigger = (runtime: Runtime<Config>, payload: CronPayload): strin
 /// x402 Payment Gate: Verify caller has pre-purchased credits for premium actions.
 /// Returns true if payment gate is not configured (free access) or caller has credits.
 /// Fail-closed: on error, denies access to protect premium data.
+const GATE_READ_ABI = [{ inputs: [{ name: 'consumer', type: 'address' }], name: 'getCredits', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' }]
+const GATE_CONSUME_ABI = [{ inputs: [{ name: 'consumer', type: 'address' }], name: 'consumeCredit', outputs: [], stateMutability: 'nonpayable', type: 'function' }]
+
 const verifyPaymentGate = (runtime: Runtime<Config>, payer: string | undefined): boolean => {
   const gateAddr = runtime.config.paymentGateAddress
   if (!gateAddr) return true // No gate configured = free access
   if (!payer) return false   // Gate configured but no payer = deny
-
-  const GATE_ABI = [{ inputs: [{ name: 'consumer', type: 'address' }], name: 'getCredits', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' }]
 
   try {
     const targetNetwork = getNetwork({
@@ -537,7 +538,7 @@ const verifyPaymentGate = (runtime: Runtime<Config>, payer: string | undefined):
 
     const gateClient = new cre.capabilities.EVMClient(targetNetwork.chainSelector.selector)
     const callData = encodeFunctionData({
-      abi: GATE_ABI,
+      abi: GATE_READ_ABI,
       functionName: 'getCredits',
       args: [payer as Address],
     })
@@ -550,14 +551,40 @@ const verifyPaymentGate = (runtime: Runtime<Config>, payer: string | undefined):
       .result()
 
     const creditBalance = decodeFunctionResult({
-      abi: GATE_ABI,
+      abi: GATE_READ_ABI,
       functionName: 'getCredits',
       data: bytesToHex(creditResult.data),
     })
 
     const minCredits = BigInt(runtime.config.paymentMinCredits || '1')
     runtime.log(`  x402 gate: ${payer} has ${creditBalance} credits (min: ${minCredits})`)
-    return (creditBalance as bigint) >= minCredits
+
+    if ((creditBalance as bigint) < minCredits) return false
+
+    // Consume 1 credit on-chain after verification passes
+    try {
+      const consumeData = encodeFunctionData({
+        abi: GATE_CONSUME_ABI,
+        functionName: 'consumeCredit',
+        args: [payer as Address],
+      })
+      const consumeReport = encodeAbiParameters(
+        parseAbiParameters('address, bytes'),
+        [gateAddr as Address, consumeData],
+      )
+      gateClient
+        .writeReport(runtime, {
+          report: consumeReport,
+          gasLimit: BigInt(runtime.config.gasLimit || '100000'),
+        })
+        .result()
+      runtime.log(`  x402 gate: consumed 1 credit for ${payer}`)
+    } catch (consumeErr) {
+      // Credit consumption is best-effort in simulator; don't block the action
+      runtime.log(`  x402 gate: credit consume skipped (${consumeErr})`)
+    }
+
+    return true
   } catch (e) {
     runtime.log(`  x402 gate check error: ${e}`)
     return false // Fail closed: deny access on error
