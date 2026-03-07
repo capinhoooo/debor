@@ -1,8 +1,13 @@
 [build]
   base = "web"
-  command = "bun install && bun run build 2>&1 || (echo 'BUILD FAILED' && ls -la .output/ 2>/dev/null && exit 1)"
+  command = "bun install && NODE_OPTIONS='--no-warnings' bun run build"
   publish = ".output/public"
 
 [build.environment]
   NODE_VERSION = "20"
   BUN_VERSION = "1.2.4"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
