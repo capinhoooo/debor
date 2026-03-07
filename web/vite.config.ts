@@ -18,6 +18,17 @@ const config = defineConfig({
     tanstackStart(),
     viteReact(),
   ],
+  ssr: {
+    noExternal: [],
+    external: [
+      '@rainbow-me/rainbowkit',
+      'wagmi',
+      '@tanstack/react-query',
+      '@heroui/react',
+      'motion',
+      'viem',
+    ],
+  },
 })
 
 export default config
