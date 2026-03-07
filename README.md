@@ -13,6 +13,7 @@ Built with **Chainlink CRE** for [Convergence: A Chainlink Hackathon](https://ch
 - [The Problem](#the-problem)
 - [What DeBOR Does](#what-debor-does)
 - [Architecture](#architecture)
+- [Why CRE?](#why-cre)
 - [Data Flow](#data-flow)
 - [Smart Contracts](#smart-contracts)
 - [CRE Workflow](#cre-workflow-10-handlers)
@@ -199,6 +200,24 @@ On top of the benchmark oracle, DeBOR includes:
 │  usePaymentGateData, useRiskMetrics, useSOFRData, useConsumerData       │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Why CRE?
+
+DeBOR requires reading 43 lending protocol contracts across 6 different mainnet chains, fetching TVL data from external APIs, computing weighted benchmarks, running AI analysis, and writing results to 4+ on-chain destinations, all within a single atomic workflow. No other orchestration layer can do this.
+
+| Requirement | Why CRE is the only option |
+|---|---|
+| **Multi-chain reads** | `EVMClient.callContract` reads Aave/Compound/Spark/Morpho/Moonwell/Benqi across Ethereum, Base, Arbitrum, Optimism, Avalanche, and Polygon in a single workflow |
+| **External API calls** | `HTTPClient.fetch` with DON consensus for DeFiLlama TVL and NY Fed SOFR/EFFR |
+| **Confidential AI** | `ConfidentialHTTPClient.fetch` calls Groq LLM inside TEE, DON nodes vote on risk verdict |
+| **Atomic writes** | Single workflow writes benchmark to oracle, triggers CCIP relay, settles swaps, updates AI insight |
+| **Cron scheduling** | CRE cron triggers fire every 30 minutes per asset with staggered timing |
+| **Autonomous lifecycle** | Swap settlement, liquidation checks, circuit breaker logic run without human intervention |
+| **Manipulation resistance** | DON consensus ensures no single node can manipulate rates or AI verdicts |
+
+Traditional approaches (Chainlink Automation + Functions) cannot orchestrate cross-chain reads, AI analysis, and multi-contract writes in a single verifiable pipeline. CRE makes DeBOR possible.
 
 ---
 
@@ -621,7 +640,8 @@ TanStack Start (React 19 SSR) + wagmi v3 + RainbowKit v2 + HeroUI + Tailwind CSS
 | `/risk` | [`RiskDashboard.tsx`](web/src/components/RiskDashboard.tsx) | Consumer contract + client-side risk math |
 | `/compare` | [`ComparePage.tsx`](web/src/components/ComparePage.tsx) | SOFR/EFFR API + oracle reads |
 | `/payment` | [`PaymentGatePage.tsx`](web/src/components/PaymentGatePage.tsx) | PaymentGate reads + USDC approve/purchase |
-| `/methodology` | [`MethodologyPage.tsx`](web/src/components/MethodologyPage.tsx) | Static documentation |
+| `/pipeline` | [`PipelinePage.tsx`](web/src/components/PipelinePage.tsx) | Live CRE pipeline visualization + stats |
+| `/methodology` | [`MethodologyPage.tsx`](web/src/components/MethodologyPage.tsx) | Deployed contract addresses + methodology |
 
 ### Key Hooks
 
@@ -651,12 +671,12 @@ Benji editorial style: light-only, warm off-white (#f7f7f5), pink accent (rgb(25
 
 | Contract | Address | Verified |
 |----------|---------|----------|
-| DeBOR-USDC Oracle | [`0x7ec6d8C63f752b5e59e63826b603888Ccb7136c1`](https://sepolia.etherscan.io/address/0x7ec6d8C63f752b5e59e63826b603888Ccb7136c1) | Yes |
-| DeBOR-ETH Oracle | [`0x0D4021b8aBEa12327194ef6379A18dF8124F6EFe`](https://sepolia.etherscan.io/address/0x0D4021b8aBEa12327194ef6379A18dF8124F6EFe) | Yes |
-| DeBOR-BTC Oracle | [`0xE368d601f9b92D7cE3908a77A8CCe7549cb0B354`](https://sepolia.etherscan.io/address/0xE368d601f9b92D7cE3908a77A8CCe7549cb0B354) | Yes |
-| DeBOR-DAI Oracle | [`0x7389C0b32212e85Ef142C235AF30b46C74dD249E`](https://sepolia.etherscan.io/address/0x7389C0b32212e85Ef142C235AF30b46C74dD249E) | Yes |
-| DeBOR-USDT Oracle | [`0x245c878b80231065AA7C21CEa463958e3462d81A`](https://sepolia.etherscan.io/address/0x245c878b80231065AA7C21CEa463958e3462d81A) | Yes |
-| DeBORSwap (ERC-721 IRS) | [`0x99c07Bb55e8c58E6b0e41F77D4d8DDC1eb8B6135`](https://sepolia.etherscan.io/address/0x99c07Bb55e8c58E6b0e41F77D4d8DDC1eb8B6135) | Yes |
+| DeBOR-USDC Oracle | [`0x102Ad94B7D28B9222bf7F24Cd0022B6904A8A78E`](https://sepolia.etherscan.io/address/0x102Ad94B7D28B9222bf7F24Cd0022B6904A8A78E) | Yes |
+| DeBOR-ETH Oracle | [`0x1c6c56A422B73Ee0c70c029BEF0deD113a98c727`](https://sepolia.etherscan.io/address/0x1c6c56A422B73Ee0c70c029BEF0deD113a98c727) | Yes |
+| DeBOR-BTC Oracle | [`0x2836153c31bD747Beb470620212f6855DB7c76a4`](https://sepolia.etherscan.io/address/0x2836153c31bD747Beb470620212f6855DB7c76a4) | Yes |
+| DeBOR-DAI Oracle | [`0x4929981f89CBA741b5ED8B48283B125eaD483754`](https://sepolia.etherscan.io/address/0x4929981f89CBA741b5ED8B48283B125eaD483754) | Yes |
+| DeBOR-USDT Oracle | [`0xfcF28e4E4bCCD4477AFd5BDbf5a4943645752BDD`](https://sepolia.etherscan.io/address/0xfcF28e4E4bCCD4477AFd5BDbf5a4943645752BDD) | Yes |
+| DeBORSwap (ERC-721 IRS) | [`0x4bB75f3863B885300DB9e87f9E8DC4d71d94B5aB`](https://sepolia.etherscan.io/address/0x4bB75f3863B885300DB9e87f9E8DC4d71d94B5aB) | Yes |
 | DeBORCCIPSender | [`0xb09A5F2B70dAD8fbBe03C23e80883c9900Add3F0`](https://sepolia.etherscan.io/address/0xb09A5F2B70dAD8fbBe03C23e80883c9900Add3F0) | Yes |
 | AdaptiveLending (v2) | [`0x356509f8a5FE740488D9a6a596D617a67D153ddF`](https://sepolia.etherscan.io/address/0x356509f8a5FE740488D9a6a596D617a67D153ddF) | Yes |
 | DeBORAIInsight | [`0x8767630Fa001F380bE5d752969C4DE8D8D083083`](https://sepolia.etherscan.io/address/0x8767630Fa001F380bE5d752969C4DE8D8D083083) | Yes |
@@ -862,13 +882,13 @@ Without `--broadcast`, `writeReport` returns a mock tx hash. With `--broadcast`,
 
 ```bash
 # Read full benchmark (rate, supply, spread, vol, term7d, timestamp, sources, configured)
-cast call 0x7ec6d8C63f752b5e59e63826b603888Ccb7136c1 \
+cast call 0x102Ad94B7D28B9222bf7F24Cd0022B6904A8A78E \
   "getFullBenchmark()(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)" \
   --rpc-url https://sepolia.infura.io/v3/<YOUR_KEY>
 
 # Read individual metrics
-cast call 0x7ec6d8C63f752b5e59e63826b603888Ccb7136c1 "getRate()(uint256)" --rpc-url <RPC>
-cast call 0x7ec6d8C63f752b5e59e63826b603888Ccb7136c1 "numSources()(uint256)" --rpc-url <RPC>
+cast call 0x102Ad94B7D28B9222bf7F24Cd0022B6904A8A78E "getRate()(uint256)" --rpc-url <RPC>
+cast call 0x102Ad94B7D28B9222bf7F24Cd0022B6904A8A78E "numSources()(uint256)" --rpc-url <RPC>
 ```
 
 ### Run Tests
@@ -998,7 +1018,7 @@ debor-chainlink/
 | Trigger Types | 3 (Cron + HTTP + EVM Log) |
 | Consensus Strategies | 9 (4 top-level + 5 field-level) |
 | Tests | 146 |
-| Frontend Pages | 9 |
+| Frontend Pages | 10 |
 
 ---
 
@@ -1006,11 +1026,47 @@ debor-chainlink/
 
 **Convergence: A Chainlink Hackathon**
 
-| Track | Target |
-|-------|--------|
-| **DeFi & Tokenization** | Primary ($12K / $8K) |
-| **CRE & AI** | AI-driven autonomous risk controls, DON-consensus LLM verdicts |
-| **Risk & Compliance** | VaR/CVaR, Basel IRRBB, rate manipulation audit trail, dual circuit breakers |
+### Track: DeFi & Tokenization
+
+DeBOR creates the missing primitive for DeFi interest rate markets. It provides a standardized benchmark rate (like SOFR for DeFi), an ERC-721 tokenized interest rate swap market with automated settlement, cross-chain rate relay via CCIP to 3 L2s, and an adaptive lending protocol that adjusts collateral requirements based on live market conditions. The system reads 43 sources from 9 protocols across 6 mainnet chains and publishes on-chain every 30 minutes.
+
+### Track: CRE & AI
+
+DeBOR uses 16 CRE SDK capabilities, 9 DON consensus strategies, and 3 trigger types across 10 handlers. The AI feedback loop is fully autonomous: CRE reads oracle benchmarks > sends to Groq LLM inside TEE via ConfidentialHTTPClient > DON nodes vote on risk verdict > writes consensus result on-chain > circuit breaker checks AI verdict > swap settlement gated by AI risk level. No human in the loop.
+
+### Track: Risk & Compliance
+
+Full institutional-grade risk analytics: VaR/CVaR at 95%/99% confidence, HHI concentration index, Basel IRRBB stress tests (6 scenarios), composite risk scoring (5 components), dual circuit breaker (quantitative rate deviation + AI anomaly detection), real-time SOFR/EFFR comparison via NY Fed API, and on-chain audit trail of every risk assessment. The system computes risk-adjusted collateral ratios and market regime classification (STABLE/NORMAL/VOLATILE/CRISIS) autonomously.
+
+### Simulate Commands
+
+```bash
+# Benchmark triggers (one per asset)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 0   # USDC
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 1   # ETH
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 2   # BTC
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 3   # DAI
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 4   # USDT
+
+# Extended benchmark (14 sources merged)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 8   # USDC Extended
+
+# Swap lifecycle (settlement, liquidation, spike detection)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 5
+
+# Pre-flight health check
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 6
+
+# HTTP actions (risk analysis, AI intelligence, validation, comparison)
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 7 \
+  --http-payload '{"action":"risk"}'
+cre workflow simulate ./DeBOR-Workflow --non-interactive --trigger-index 7 \
+  --http-payload '{"action":"analyze"}'
+
+# Broadcast to Sepolia (requires cre login)
+cre workflow simulate ./DeBOR-Workflow --target staging-settings \
+  --non-interactive --trigger-index 0 --broadcast
+```
 
 ---
 
